@@ -72,3 +72,6 @@ GitHub Actions는 push/PR마다 DLL 무결성 검사와 Release 빌드, Registry
 
 상태 색상: 초록은 작업/추론 중, 노랑은 사용자 응답/승인 필요, 회색은 Idle(다음 지시 대기)/완료/중단, 빨강은 오류, 파랑은 상태 미확인입니다.
 
+## 기여
+
+버그 제보와 PR을 환영합니다. [CONTRIBUTING.md](CONTRIBUTING.md)를 참고해 주세요.

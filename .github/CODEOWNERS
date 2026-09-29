@@ -1,0 +1,7 @@
+# 기본 리뷰어
+* @garunnir
+
+# 네이티브 바이너리, 검증 스크립트, CI는 반드시 소유자 리뷰
+/src/AgentHud/native/ @garunnir
+/scripts/ @garunnir
+/.github/ @garunnir

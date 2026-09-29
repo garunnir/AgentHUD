@@ -1,0 +1,54 @@
+name: 버그 제보
+description: 예상과 다르게 동작하는 문제를 알려 주세요.
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 문제 설명
+      description: 무엇이 잘못되었는지, 원래 어떻게 동작해야 하는지 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 방법
+      placeholder: |
+        1. Claude Code 세션을 VS Code에서 시작
+        2. HUD에서 세션 항목 더블클릭
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: 관련 에이전트
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - 해당 없음
+  - type: input
+    id: version
+    attributes:
+      label: Agent HUD 버전
+      description: 릴리스 태그 또는 커밋 해시
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 환경
+      description: Windows 버전, 실행 방식(framework-dependent / self-contained / dotnet run), 관련 CLI·VS Code 확장 버전
+      placeholder: |
+        - Windows 11 24H2
+        - self-contained zip
+        - Claude Code 확장 2.1.284
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그 / 스크린샷
+      description: 세션 파일 내용을 첨부할 때는 경로·대화 내용 등 개인정보를 지워 주세요.
