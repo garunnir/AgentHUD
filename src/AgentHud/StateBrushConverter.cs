@@ -9,12 +9,12 @@ public sealed class StateBrushConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => value is AgentState state ? state switch
     {
-        AgentState.Working or AgentState.Thinking => Brushes.LimeGreen,
+        AgentState.Working or AgentState.Thinking => Brushes.DeepSkyBlue,
         AgentState.WaitingForInput or AgentState.WaitingForApproval => Brushes.Gold,
         AgentState.Error => Brushes.OrangeRed,
-        AgentState.Completed => Brushes.DeepSkyBlue,
+        AgentState.Completed => Brushes.LimeGreen,
         AgentState.Idle or AgentState.Stopped => Brushes.SlateGray,
-        AgentState.Starting => Brushes.LimeGreen,
+        AgentState.Starting => Brushes.DeepSkyBlue,
         _ => Brushes.MediumPurple
     } : Brushes.MediumPurple;
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
