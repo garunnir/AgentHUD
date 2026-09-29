@@ -9,6 +9,8 @@ public sealed record AgentSession
     public string? ProjectPath { get; init; }
     public string? WorktreePath { get; init; }
     public string? TerminalTitle { get; init; }
+    public string? SessionTitle { get; init; }
+    public string DisplayTitle => string.IsNullOrWhiteSpace(SessionTitle) ? "제목 없음" : SessionTitle;
     public string? CurrentTask { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime LastActivityAt { get; init; }

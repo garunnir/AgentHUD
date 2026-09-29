@@ -1,4 +1,4 @@
-# Agent HUD
+﻿# Agent HUD
 
 Windows 전체에서 실행되는 Claude Code와 Codex 세션을 자동 발견해 보여 주는 작은 WPF HUD입니다.
 
@@ -29,8 +29,11 @@ dotnet build AgentHud.sln
 dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj
 ```
 
-Codex는 현재 로컬 데이터에 process ID나 명시적 완료 상태가 없으므로, 마지막 파일 활동 15초 이내는 Working, 2분 이내는 active/waiting으로 보수적으로 표시합니다. Claude/Codex 내부 포맷이 바뀌면 provider만 수정하면 됩니다.
+Codex는 파일 크기와 수정 시각으로 변경을 감지하고, 변경된 로그의 마지막 256KB에서 이벤트 시각과 상태를 읽습니다. Windows에서 파일 수정 시각이 갱신되지 않아도 크기가 증가하면 반영됩니다. `task_started`는 Working, reasoning은 Thinking, `task_complete`는 Idle, `turn_aborted`는 Stopped로 표시합니다. 스레드별 PID 연결은 아직 없으므로 최근 5분 이내 이벤트가 있는 세션을 활성으로 추정합니다. 장시간 이벤트가 없는 작업이나 대기 세션의 생존 여부는 확정하지 못합니다. Claude/Codex 내부 포맷이 바뀌면 provider만 수정하면 됩니다.
 
 가상 데스크톱 고정에는 MIT 라이선스의 `VirtualDesktopAccessor.dll`을 사용합니다. 창 표시 후 고정하고 5초마다 재확인합니다. 고정 API가 실패하면 Windows의 `IVirtualDesktopManager`로 현재 활성 창의 데스크톱을 확인해 HUD를 이동합니다(250ms 간격). 전환한 데스크톱에 활성 창이 없으면 창을 활성화할 때까지 이동이 지연될 수 있습니다.
 
 GitHub Actions는 push/PR마다 DLL 무결성 검사와 Release 빌드, Registry 검사를 수행합니다. 매주 월요일에는 VirtualDesktopAccessor의 최신 안정 릴리스를 확인하고 변경이 있으면 `deps/virtualdesktopaccessor` PR을 자동 생성합니다.
+
+상태 색상: 초록은 작업/추론 중, 노랑은 사용자 응답/승인 필요, 회색은 Idle(다음 지시 대기)/완료/중단, 빨강은 오류, 파랑은 상태 미확인입니다.
+

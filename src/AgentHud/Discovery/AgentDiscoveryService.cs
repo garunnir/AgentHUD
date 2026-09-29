@@ -17,7 +17,7 @@ public sealed class AgentDiscoveryService : IAsyncDisposable
             watcher.Changed += OnChange; watcher.Created += OnChange; watcher.Deleted += OnChange; watcher.Renamed += OnChange;
             _watchers.Add(watcher);
         }
-        _loop = RunAsync(_stop.Token);
+        _loop = Task.Run(() => RunAsync(_stop.Token));
     }
     private void OnChange(object sender, FileSystemEventArgs args) => _ = RefreshAsync(_stop.Token);
     private async Task RunAsync(CancellationToken token)
@@ -32,7 +32,15 @@ public sealed class AgentDiscoveryService : IAsyncDisposable
         try
         {
             var all = new List<Models.AgentSession>();
-            foreach (var provider in _providers) all.AddRange(await provider.DiscoverAsync(token));
+            foreach (var provider in _providers)
+            {
+                try { all.AddRange(await provider.DiscoverAsync(token)); }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    System.Diagnostics.Trace.TraceError($"{provider.AgentType} discovery failed: {exception}");
+                    all.AddRange(_registry.GetByAgentType(provider.AgentType));
+                }
+            }
             _registry.Replace(all);
         }
         finally { _refreshGate.Release(); }

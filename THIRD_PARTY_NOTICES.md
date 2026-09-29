@@ -27,3 +27,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+
+## Agent icons
+
+The HUD uses the unmodified SVG path geometry from the installed official VS Code extensions:
+- Claude: Anthropic `anthropic.claude-code` 2.1.284, `resources/claude-logo.svg` (original #D97757 fill).
+- Codex: OpenAI `openai.chatgpt` 26.917.62051, `resources/blossom-white.svg`, the icon specified for the Codex sidebar in its package manifest.
+
+SVG paths are represented as WPF filled geometry (nonzero fill rule). Brand marks remain the property of their respective owners and are not covered by this project's MIT license.
