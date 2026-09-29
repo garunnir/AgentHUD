@@ -91,7 +91,8 @@ public sealed class ClaudeCodeProvider : IAgentProvider
 
     private static AgentState MapState(string? status, DateTime activity) => status?.ToLowerInvariant() switch
     {
-        "working" or "running" => AgentState.Working,
+        // Claude Code writes "busy" while a turn is in progress.
+        "busy" or "working" or "running" => AgentState.Working,
         "thinking" => AgentState.Thinking,
         "waiting" or "waiting_for_input" => AgentState.WaitingForInput,
         "waiting_for_approval" => AgentState.WaitingForApproval,

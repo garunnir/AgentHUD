@@ -11,6 +11,10 @@ Assert(registry.GetActiveAgents().Count == 0, "update");
 Assert(registry.Remove(a.Id), "remove");
 registry.Replace([a with { LastActivityAt = a.LastActivityAt.AddMinutes(-1) }, a]);
 Assert(registry.GetAllAgents().Count == 1 && registry.FindSession(a.Id) == a, "duplicate observations keep newest session");
+var older = a with { Id = "codex:older", AgentType = AgentType.Codex, LastActivityAt = a.LastActivityAt.AddMinutes(-5) };
+var recentIdle = a with { Id = "claude:recent", IsActive = false, LastActivityAt = a.LastActivityAt.AddMinutes(1) };
+registry.Replace([older, a, recentIdle]);
+Assert(registry.GetAllAgents().Select(x => x.Id).SequenceEqual(["claude:recent", a.Id, "codex:older"]), "most recently active sessions are listed first");
 var testHome = Path.Combine(Path.GetTempPath(), "AgentHud-tests-" + Guid.NewGuid().ToString("N"));
 var sessionsRoot = Path.Combine(testHome, ".claude", "sessions");
 Directory.CreateDirectory(sessionsRoot);
@@ -32,6 +36,10 @@ try
         pid = Environment.ProcessId, sessionId = "iso-session", startedAt = now.ToString("O"), updatedAt = now.ToString("O"), status = "waiting" }));
     found = await provider.DiscoverAsync(CancellationToken.None);
     Assert(found.Single().State == AgentState.WaitingForInput, "ISO timestamp compatibility");
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = "busy-session", updatedAt = now.ToUnixTimeMilliseconds(), status = "busy" }));
+    found = await provider.DiscoverAsync(CancellationToken.None);
+    Assert(found.Single().State == AgentState.Working, "Claude busy status maps to Working");
     var titleId = Guid.NewGuid().ToString();
     var projectLogs = Path.Combine(testHome, ".claude", "projects", "test-project");
     Directory.CreateDirectory(projectLogs);

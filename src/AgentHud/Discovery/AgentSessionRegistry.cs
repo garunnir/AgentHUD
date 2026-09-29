@@ -7,7 +7,7 @@ public sealed class AgentSessionRegistry
     private readonly object _gate = new();
     private Dictionary<string, AgentSession> _sessions = [];
     public event EventHandler? Changed;
-    public IReadOnlyList<AgentSession> GetAllAgents() { lock (_gate) return _sessions.Values.OrderByDescending(x => x.IsActive).ThenBy(x => x.AgentType).ThenBy(x => x.StartedAt).ToArray(); }
+    public IReadOnlyList<AgentSession> GetAllAgents() { lock (_gate) return _sessions.Values.OrderByDescending(x => x.LastActivityAt.ToUniversalTime()).ThenByDescending(x => x.StartedAt).ToArray(); }
     public IReadOnlyList<AgentSession> GetActiveAgents() => GetAllAgents().Where(x => x.IsActive).ToArray();
     public IReadOnlyList<AgentSession> GetByProject(string path) => GetAllAgents().Where(x => string.Equals(x.ProjectPath, path, StringComparison.OrdinalIgnoreCase)).ToArray();
     public IReadOnlyList<AgentSession> GetByAgentType(AgentType type) => GetAllAgents().Where(x => x.AgentType == type).ToArray();
