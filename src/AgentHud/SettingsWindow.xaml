@@ -12,6 +12,11 @@
         <TextBlock Text="Codex 활성 유지 시간" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
       </DockPanel>
       <TextBlock Margin="0,4,0,0" Text="Codex는 프로세스를 확인할 수 없어, 마지막 이벤트 후 이 시간 동안만 활성으로 봅니다. 질문 대기 중 사라진다면 늘리세요. (1–1440)" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+      <CheckBox Margin="0,12,0,0" IsChecked="{Binding NotifyLimitReset, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="사용량 한도가 풀리면 알림"/>
+      <CheckBox Margin="20,6,0,0" IsChecked="{Binding NotifyVisibleOnly, Mode=TwoWay}" IsEnabled="{Binding NotifyLimitReset}" Foreground="#DCE3ED" FontSize="12" Content="HUD에 표시 중인 세션만"/>
+      <CheckBox Margin="0,8,0,0" IsChecked="{Binding AutoResume, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="사용량 한도 리셋 후 자동으로 이어서 진행"/>
+      <TextBox Margin="0,6,0,0" Text="{Binding ResumePrompt, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding AutoResume}" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="80" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12" ToolTip="재개할 때 보낼 메시지"/>
+      <TextBlock Margin="0,4,0,0" Text="한도로 멈춘 Claude·Codex 대화를 리셋 1분 뒤 CLI로 한 번 이어 실행합니다. 파일 편집만 자동 허용되고(Claude acceptEdits, Codex workspace-write), 진행 내용은 VS Code 대화 탭을 다시 열어야 보입니다. 리셋 후 30분이 지난 한도는 건드리지 않습니다." Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
     </StackPanel>
   </Border>
 </Window>

@@ -262,6 +262,108 @@ try
     Assert(!new AgentHud.MemoStore(memoPath).HasProject("C:\\Repo"), "blank project memo removes it");
 }
 finally { File.Delete(memoPath); }
+var seoul = TimeZoneInfo.FindSystemTimeZoneById("Asia/Seoul");
+var limitEvent = new DateTime(2026, 9, 29, 5, 29, 3, DateTimeKind.Utc); // 14:29 KST
+Assert(RateLimitParser.ParseReset("You've hit your usage limit. ... or try again at 4:34 PM.", limitEvent, seoul) == new DateTime(2026, 9, 29, 7, 34, 0, DateTimeKind.Utc),
+    "Codex reset clock time in local zone");
+Assert(RateLimitParser.ParseReset("try again at 1:05 PM.", limitEvent, seoul) == new DateTime(2026, 9, 30, 4, 5, 0, DateTimeKind.Utc),
+    "reset clock earlier than event rolls to next day");
+Assert(RateLimitParser.ParseReset("You've hit your limit · resets 3pm (Asia/Seoul)", limitEvent) == new DateTime(2026, 9, 29, 6, 0, 0, DateTimeKind.Utc),
+    "Claude reset with IANA time zone");
+Assert(RateLimitParser.ParseReset("Weekly limit reached ∙ resets Oct 3, 4:30pm", limitEvent, seoul) == new DateTime(2026, 10, 3, 7, 30, 0, DateTimeKind.Utc),
+    "reset with month and day");
+Assert(RateLimitParser.ParseReset("Claude AI usage limit reached|1790686347", limitEvent) == DateTimeOffset.FromUnixTimeSeconds(1790686347).UtcDateTime,
+    "legacy unix reset suffix");
+Assert(RateLimitParser.ParseReset("try again in 2 hours 15 minutes", limitEvent) == limitEvent.AddMinutes(135), "relative reset");
+Assert(RateLimitParser.ParseReset("Credit balance is too low", limitEvent) is null && !RateLimitParser.LooksLikeUsageLimit("Credit balance is too low"),
+    "billing error is not a usage limit");
+var limitHome = Path.Combine(Path.GetTempPath(), "AgentHud-limit-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var codexDir = Path.Combine(limitHome, ".codex", "sessions");
+    Directory.CreateDirectory(codexDir);
+    var threadId = Guid.NewGuid().ToString();
+    var rollout = Path.Combine(codexDir, "rollout-limit.jsonl");
+    var stamp = DateTime.UtcNow.AddMinutes(-2);
+    string Line(DateTime time, string type, object payload) => System.Text.Json.JsonSerializer.Serialize(new { timestamp = time.ToString("O"), type, payload }) + "\n";
+    var resetAt = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
+    await File.WriteAllTextAsync(rollout,
+        Line(stamp, "session_meta", new { id = threadId, cwd = limitHome, timestamp = stamp.ToString("O") })
+        + Line(stamp, "event_msg", new { type = "task_started" })
+        + Line(stamp, "event_msg", new { type = "token_count", rate_limits = new { primary = new { used_percent = 100.0, window_minutes = 300, resets_at = resetAt } } })
+        + Line(stamp, "event_msg", new { type = "task_complete", error = new { message = "You've hit your usage limit. Upgrade to Pro.", codex_error_info = "usage_limit_exceeded" } }));
+    var limitedCodex = new CodexProvider(limitHome) { ActiveWindow = TimeSpan.Zero };
+    var limited = (await limitedCodex.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(limited.State == AgentState.RateLimited && limited.IsActive, "Codex usage limit is rate limited and kept active");
+    Assert(limited.RateLimitResetAt == DateTimeOffset.FromUnixTimeSeconds(resetAt).UtcDateTime, "Codex reset falls back to exhausted window");
+    await File.AppendAllTextAsync(rollout, Line(DateTime.UtcNow, "event_msg", new { type = "user_message" }));
+    limited = (await limitedCodex.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(limited.RateLimitResetAt is null && limited.State == AgentState.Working, "new Codex turn clears usage limit");
+    var oldStamp = DateTime.UtcNow.AddHours(-3);
+    await File.WriteAllTextAsync(rollout,
+        Line(oldStamp, "session_meta", new { id = threadId, cwd = limitHome, timestamp = oldStamp.ToString("O") })
+        + Line(oldStamp, "event_msg", new { type = "task_complete", error = new { message = "try again in 1 hours", codex_error_info = "usage_limit_exceeded" } }));
+    Assert((await new CodexProvider(limitHome) { ActiveWindow = TimeSpan.Zero }.DiscoverAsync(CancellationToken.None)).Count == 0,
+        "long-expired Codex limit does not keep session visible");
+
+    var claudeSessions = Path.Combine(limitHome, ".claude", "sessions");
+    var claudeProject = Path.Combine(limitHome, ".claude", "projects", "p");
+    Directory.CreateDirectory(claudeSessions);
+    Directory.CreateDirectory(claudeProject);
+    var claudeId = Guid.NewGuid().ToString();
+    await File.WriteAllTextAsync(Path.Combine(claudeSessions, "s.json"), System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = claudeId, cwd = limitHome, status = "idle" }));
+    var claudeLog = Path.Combine(claudeProject, claudeId + ".jsonl");
+    string ClaudeLine(string type, string text, bool apiError = false, string? error = null) => System.Text.Json.JsonSerializer.Serialize(new {
+        type, sessionId = claudeId, timestamp = DateTime.UtcNow.ToString("O"), isApiErrorMessage = apiError, error,
+        message = new { content = new[] { new { type = "text", text } } } }) + "\n";
+    var resetLocal = DateTime.Now.AddHours(1);
+    await File.WriteAllTextAsync(claudeLog, ClaudeLine("user", "작업해줘")
+        + ClaudeLine("assistant", $"You've hit your limit · resets {resetLocal.ToString("h:mmtt", System.Globalization.CultureInfo.InvariantCulture)}", true, "rate_limit"));
+    var claude = (await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single();
+    Assert(claude.State == AgentState.RateLimited && claude.RateLimitResetAt is { } claudeReset
+        && Math.Abs((claudeReset - resetLocal.ToUniversalTime()).TotalMinutes) < 1, "Claude usage limit detected with reset time");
+    await File.AppendAllTextAsync(claudeLog, ClaudeLine("user", "계속"));
+    claude = (await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single();
+    Assert(claude.RateLimitResetAt is null && claude.State == AgentState.Idle, "new Claude message clears usage limit");
+    await File.AppendAllTextAsync(claudeLog, ClaudeLine("assistant", "Credit balance is too low", true, "billing_error"));
+    Assert((await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single().RateLimitResetAt is null,
+        "Claude billing error is not auto-resumable");
+
+    // PATH에 codex가 없으면 VS Code 확장에 들어 있는 CLI를 찾음
+    var fakeCodex = Path.Combine(limitHome, ".vscode", "extensions", "openai.chatgpt-1.0.0-win32-x64", "bin", "windows-x86_64", "codex.exe");
+    Directory.CreateDirectory(Path.GetDirectoryName(fakeCodex)!);
+    await File.WriteAllTextAsync(fakeCodex, "");
+    var resumeClock = new TestTimeProvider();
+    var launches = new List<(string Id, System.Diagnostics.ProcessStartInfo Info, string Prompt)>();
+    var resumer = new AgentHud.AutoResumer(limitHome, limitHome, resumeClock, (session, info, prompt) => { launches.Add((session.Id, info, prompt)); return true; });
+    var due = new AgentSession { Id = $"codex:{threadId}", AgentType = AgentType.Codex, ProjectPath = limitHome,
+        RateLimitResetAt = resumeClock.Now.UtcDateTime.AddMinutes(-2) };
+    resumer.Check([due]);
+    Assert(launches.Count == 0, "auto resume is off by default");
+    resumer.Enabled = true;
+    resumer.Check([due with { RateLimitResetAt = resumeClock.Now.UtcDateTime.AddSeconds(-30) }]);
+    Assert(launches.Count == 0, "auto resume waits after reset");
+    resumer.Check([due, due with { Id = "codex:child", ParentSessionId = due.Id }, due with { Id = "codex:old", RateLimitResetAt = resumeClock.Now.UtcDateTime.AddHours(-2) }]);
+    resumer.Check([due]);
+    Assert(launches.Count == 1 && launches[0].Id == due.Id, "resume once per reset, skipping children and stale limits");
+    Assert(launches[0].Info.ArgumentList.SequenceEqual(new[] { "exec", "resume", "--skip-git-repo-check", "-c", "sandbox_mode=workspace-write", threadId, "-" })
+        && launches[0].Info.WorkingDirectory == limitHome && launches[0].Prompt == AgentHud.AutoResumer.DefaultPrompt, "Codex resume command");
+    resumer.Check([due with { RateLimitResetAt = resumeClock.Now.UtcDateTime.AddMinutes(-3) }]);
+    Assert(launches.Count == 2, "a new limit on the same session resumes again");
+    var notifier = new AgentHud.RateLimitNotifier(resumeClock);
+    Assert(notifier.TakeDue([due with { RateLimitResetAt = resumeClock.Now.UtcDateTime.AddMinutes(1) }]).Count == 0, "no reset notification before reset");
+    Assert(notifier.TakeDue([due, due with { Id = "codex:child", ParentSessionId = due.Id }, due with { Id = "codex:old", RateLimitResetAt = resumeClock.Now.UtcDateTime.AddHours(-2) }])
+        .Select(x => x.Id).SequenceEqual([due.Id]), "reset notification for due top-level session only");
+    Assert(notifier.TakeDue([due]).Count == 0, "reset notified once");
+    notifier.Enabled = false;
+    Assert(notifier.TakeDue([due with { RateLimitResetAt = resumeClock.Now.UtcDateTime.AddMinutes(-5) }]).Count == 0, "reset notification can be turned off");
+    var claudeInfo = resumer.CreateStartInfo(new AgentSession { Id = $"claude:{claudeId}", AgentType = AgentType.ClaudeCode, ProjectPath = limitHome });
+    if (claudeInfo is not null)
+        Assert(claudeInfo.ArgumentList.SkipWhile(x => x != "--resume").SequenceEqual(new[] { "--resume", claudeId, "-p", "--permission-mode", "acceptEdits" }), "Claude resume command");
+    Assert(resumer.CreateStartInfo(due with { Id = "codex:not-a-guid & calc" }) is null, "non-GUID session ids are never passed to a command line");
+}
+finally { Directory.Delete(limitHome, recursive: true); }
 Console.WriteLine("All registry and discovery checks passed.");
 
 if (args.Contains("--discover"))

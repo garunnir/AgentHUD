@@ -12,6 +12,7 @@ public sealed class StateBrushConverter : IValueConverter
         AgentState.Working or AgentState.Thinking => Brushes.DeepSkyBlue,
         AgentState.WaitingForInput or AgentState.WaitingForApproval => Brushes.Gold,
         AgentState.Error => Brushes.OrangeRed,
+        AgentState.RateLimited => Brushes.HotPink,
         AgentState.Completed => Brushes.LimeGreen,
         AgentState.Idle or AgentState.Stopped => Brushes.SlateGray,
         AgentState.Starting => Brushes.DeepSkyBlue,

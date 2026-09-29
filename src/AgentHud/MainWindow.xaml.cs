@@ -51,6 +51,75 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _ = _discovery.RefreshAsync(CancellationToken.None);
         }
     }
+    private readonly AutoResumer _resumer = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
+    public bool AutoResume
+    {
+        get => _resumer.Enabled;
+        set
+        {
+            if (_resumer.Enabled == value) return;
+            _resumer.Enabled = value;
+            PropertyChanged?.Invoke(this, new(nameof(AutoResume)));
+        }
+    }
+    public string ResumePrompt
+    {
+        get => _resumer.Prompt;
+        set
+        {
+            if (_resumer.Prompt == value) return;
+            _resumer.Prompt = value;
+            PropertyChanged?.Invoke(this, new(nameof(ResumePrompt)));
+        }
+    }
+    private readonly RateLimitNotifier _limitNotifier = new();
+    public bool NotifyLimitReset
+    {
+        get => _limitNotifier.Enabled;
+        set
+        {
+            if (_limitNotifier.Enabled == value) return;
+            _limitNotifier.Enabled = value;
+            PropertyChanged?.Invoke(this, new(nameof(NotifyLimitReset)));
+        }
+    }
+    // 켜면 숨긴 세션이나 HUD 목록에서 빠진 세션(종료된 Claude 프로세스 등)은 알리지 않음
+    private bool _notifyVisibleOnly = true;
+    public bool NotifyVisibleOnly
+    {
+        get => _notifyVisibleOnly;
+        set
+        {
+            if (_notifyVisibleOnly == value) return;
+            _notifyVisibleOnly = value;
+            PropertyChanged?.Invoke(this, new(nameof(NotifyVisibleOnly)));
+        }
+    }
+    private readonly List<NotificationWindow> _notifications = [];
+    private void ShowLimitReset(AgentSession session)
+    {
+        var body = $"{session.DisplayTitle}\n{session.RateLimitResetAt!.Value.ToLocalTime():HH:mm}에 한도가 풀렸습니다. "
+            + (AutoResume ? "잠시 뒤 자동으로 이어서 진행합니다." : "클릭하면 대화를 엽니다.");
+        var w = new NotificationWindow($"{session.DisplayName} 한도 해제 · {session.ProjectName}", body, () => { _registry.AcknowledgeCompletion(session.Id); OpenInVsCode(session); });
+        w.Loaded += (_, _) => LayoutNotifications();
+        w.Closed += (_, _) => { _notifications.Remove(w); LayoutNotifications(); };
+        _notifications.Add(w);
+        w.Show();
+        System.Media.SystemSounds.Asterisk.Play();
+    }
+    // 작업 영역 오른쪽 아래부터 위로 쌓음
+    private void LayoutNotifications()
+    {
+        var area = SystemParameters.WorkArea;
+        var bottom = area.Bottom - 12;
+        foreach (var w in _notifications)
+        {
+            w.Left = area.Right - w.Width - 12;
+            bottom -= w.ActualHeight;
+            w.Top = bottom;
+            bottom -= 8;
+        }
+    }
     private SettingsWindow? _settingsWindow;
     private void Settings_OnClick(object sender, RoutedEventArgs e)
     {
@@ -86,6 +155,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void UpdateSessions()
     {
         var all = _registry.GetAllAgents();
+        _resumer.Check(all);
         // 숨긴 세션은 초기화 전까지 숨기되, 새로 대기·완료 상태가 되면 다시 표시
         foreach (var (id, seen) in _dismissed.ToArray())
         {
@@ -94,6 +164,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             else _dismissed[id] = s.DisplayState;
         }
         var next = all.Where(x => !_dismissed.ContainsKey(x.Id) && (x.HasUnreadCompletion || x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30))).ToArray();
+        foreach (var session in _limitNotifier.TakeDue(NotifyVisibleOnly ? next : all)) ShowLimitReset(session);
         for (var i = 0; i < next.Length; i++)
         {
             if (i >= Sessions.Count) Sessions.Add(next[i]);
@@ -213,18 +284,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
         foreach (var w in _memoWindows.Values.ToArray()) w.Close();
+        foreach (var w in _notifications.ToArray()) w.Close();
         SavePlacement();
         await _discovery.DisposeAsync();
     }
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true);
 }
 

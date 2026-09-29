@@ -63,6 +63,8 @@ public sealed class CodexProvider : IAgentProvider
                     };
                     var pendingQuestion = cached is not null && file.Length >= cached.Length ? cached.PendingQuestion : null;
                     var pendingAsyncQuestion = cached is not null && file.Length >= cached.Length && cached.PendingAsyncQuestion;
+                    var rateLimitReset = cached is not null && file.Length >= cached.Length ? cached.Session.RateLimitResetAt : null;
+                    var limitWindowReset = cached is not null && file.Length >= cached.Length ? cached.LimitWindowReset : null;
                     // Windows may retain LastWriteTime while the writer keeps its handle open.
                     // Inspect a bounded tail when length changes, and use event timestamps.
                     await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
@@ -83,6 +85,11 @@ public sealed class CodexProvider : IAgentProvider
                                 session = session with { LastActivityAt = time };
                                 if (!item.TryGetProperty("payload", out var body)) continue;
                                 var kind = (GetString(item, "type"), GetString(body, "type"));
+                                if (kind is ("event_msg", "token_count")) limitWindowReset = ExhaustedWindowReset(body) ?? limitWindowReset;
+                                if (kind is ("event_msg", "task_started" or "user_message")) rateLimitReset = null;
+                                if (kind.Item1 == "event_msg" && UsageLimitMessage(body) is { } limitMessage)
+                                    rateLimitReset = RateLimitParser.ParseReset(limitMessage, time)
+                                        ?? (limitWindowReset > time ? limitWindowReset : null) ?? time + RateLimitParser.FallbackDelay;
                                 var isQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
                                     && GetString(body, "name") is "request_user_input" or "functions.request_user_input";
                                 var isAsyncQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
@@ -116,20 +123,29 @@ public sealed class CodexProvider : IAgentProvider
                                 if (kind is ("event_msg", "user_message" or "turn_aborted"))
                                     pendingAsyncQuestion = false;
                                 if (pendingAsyncQuestion) state = AgentState.WaitingForInput;
-                                session = session with { State = state };
+                                session = session with { State = state, RateLimitResetAt = rateLimitReset };
                             }
                         }
                         catch (JsonException) { }
                     }
                     if (session.LastActivityAt == DateTime.MinValue) session = session with { LastActivityAt = file.LastWriteTimeUtc };
-                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion);
+                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion, limitWindowReset);
                     _cache[path] = cached;
                 }
-                var age = DateTime.UtcNow - cached.Session.LastActivityAt;
+                var now = DateTime.UtcNow;
+                var age = now - cached.Session.LastActivityAt;
                 var activeWindow = ActiveWindow;
+                // 한도 대기 세션은 리셋 후 자동 재개가 가능할 때까지 활성으로 유지
+                var limitPending = cached.Session.RateLimitResetAt is { } reset && now < reset + LimitGrace;
+                var limited = cached.Session.RateLimitResetAt > now;
                 // Without a per-thread PID, recent event activity is evidence, not proof of liveness.
-                if (age <= TimeSpan.FromMinutes(30) || age <= activeWindow)
-                    result.Add(cached.Session with { SessionTitle = _titles.GetValueOrDefault(cached.Session.Id), IsActive = cached.Session.State != AgentState.Stopped && age <= activeWindow });
+                if (age <= TimeSpan.FromMinutes(30) || age <= activeWindow || limitPending)
+                    result.Add(cached.Session with
+                    {
+                        SessionTitle = _titles.GetValueOrDefault(cached.Session.Id),
+                        State = limited ? AgentState.RateLimited : cached.Session.State,
+                        IsActive = limitPending || (cached.Session.State != AgentState.Stopped && age <= activeWindow)
+                    });
             }
             catch (JsonException) { }
             catch (IOException) { }
@@ -138,7 +154,30 @@ public sealed class CodexProvider : IAgentProvider
         foreach (var path in _cache.Keys.Where(path => !seen.Contains(path)).ToArray()) _cache.Remove(path);
         return result;
     }
-    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion);
+    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion, DateTime? LimitWindowReset);
+    // 리셋 후 이 시간 동안은 재개를 기다리는 세션으로 표시
+    public static readonly TimeSpan LimitGrace = TimeSpan.FromMinutes(30);
+    // task_complete 등의 error.codex_error_info가 usage_limit_exceeded면 그 문구
+    private static string? UsageLimitMessage(JsonElement body)
+    {
+        var error = body.TryGetProperty("error", out var nested) && nested.ValueKind == JsonValueKind.Object ? nested : body;
+        return GetString(error, "codex_error_info") == "usage_limit_exceeded" ? GetString(error, "message") ?? "" : null;
+    }
+    // token_count.rate_limits에서 100% 소진된 창의 가장 늦은 리셋 시각
+    private static DateTime? ExhaustedWindowReset(JsonElement body)
+    {
+        if (!body.TryGetProperty("rate_limits", out var limits) || limits.ValueKind != JsonValueKind.Object) return null;
+        DateTime? latest = null;
+        foreach (var name in new[] { "primary", "secondary" })
+        {
+            if (!limits.TryGetProperty(name, out var window) || window.ValueKind != JsonValueKind.Object) continue;
+            if (!window.TryGetProperty("used_percent", out var used) || used.ValueKind != JsonValueKind.Number || used.GetDouble() < 100) continue;
+            if (!window.TryGetProperty("resets_at", out var resets) || !resets.TryGetInt64(out var seconds)) continue;
+            var time = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
+            if (latest is null || time > latest) latest = time;
+        }
+        return latest;
+    }
     private async Task RefreshTitlesAsync(CancellationToken token)
     {
         try

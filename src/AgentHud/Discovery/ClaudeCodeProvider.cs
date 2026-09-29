@@ -41,12 +41,14 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 if (alive && transcript.HasPendingQuestion
                     && state is not (AgentState.Error or AgentState.Stopped or AgentState.WaitingForApproval))
                     state = AgentState.WaitingForInput;
+                if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForApproval))
+                    state = AgentState.RateLimited;
                 result.Add(new AgentSession
                 {
                     Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
                     ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
                     StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
-                    State = state, IsActive = alive
+                    State = state, IsActive = alive, RateLimitResetAt = transcript.RateLimitResetAt
                 });
             }
             catch (JsonException) { }
@@ -63,7 +65,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             .Any(project => File.Exists(Path.Combine(project, sessionId + ".jsonl")));
     }
 
-    private sealed record TranscriptInfo(string? Title = null, bool HasPendingQuestion = false);
+    private sealed record TranscriptInfo(string? Title = null, bool HasPendingQuestion = false, DateTime? RateLimitResetAt = null);
     private async Task<TranscriptInfo> ReadTranscriptAsync(string sessionId, CancellationToken token)
     {
         // Session IDs are filenames, never paths supplied by metadata.
@@ -78,11 +80,20 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 if (_transcripts.TryGetValue(path, out var cached) && cached.Length == info.Length && cached.Modified == info.LastWriteTimeUtc)
                     return cached.Info;
                 string? aiTitle = null, customTitle = null;
+                DateTime? rateLimitReset = null;
                 var pendingQuestions = new HashSet<string>();
                 await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
                 using var reader = new StreamReader(stream);
                 while (await reader.ReadLineAsync(token) is { } line)
                 {
+                    // 마지막 대화 기록이 사용량 한도 오류면 리셋 시각을 기억하고, 이후 대화가 이어지면 지움
+                    if (line.Contains("\"isApiErrorMessage\":true", StringComparison.Ordinal))
+                    {
+                        rateLimitReset = ParseRateLimit(line, sessionId);
+                        continue;
+                    }
+                    if (line.Contains("\"type\":\"user\"", StringComparison.Ordinal) || line.Contains("\"type\":\"assistant\"", StringComparison.Ordinal))
+                        rateLimitReset = null;
                     // Only parse records relevant to titles or question lifecycle.
                     if (!line.Contains("\"aiTitle\"", StringComparison.Ordinal) && !line.Contains("\"customTitle\"", StringComparison.Ordinal)
                         && !line.Contains("\"tool_use\"", StringComparison.Ordinal) && !line.Contains("\"tool_result\"", StringComparison.Ordinal)) continue;
@@ -110,7 +121,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                     }
                     catch (JsonException) { }
                 }
-                var result = new TranscriptInfo(!string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle, pendingQuestions.Count > 0);
+                var result = new TranscriptInfo(!string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle, pendingQuestions.Count > 0, rateLimitReset);
                 _transcripts[path] = (info.Length, info.LastWriteTimeUtc, result);
                 return result;
             }
@@ -120,6 +131,23 @@ public sealed class ClaudeCodeProvider : IAgentProvider
         return new();
     }
 
+    private static DateTime? ParseRateLimit(string line, string sessionId)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(line);
+            var root = json.RootElement;
+            if (GetString(root, "sessionId") != sessionId) return null;
+            var text = root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
+                && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array
+                ? string.Join('\n', content.EnumerateArray().Select(block => GetString(block, "text")).OfType<string>()) : "";
+            if (GetString(root, "error") != "rate_limit" && !RateLimitParser.LooksLikeUsageLimit(text)) return null;
+            var at = GetString(root, "timestamp") is { } stamp && DateTime.TryParse(stamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed.ToUniversalTime() : DateTime.UtcNow;
+            return RateLimitParser.ParseReset(text, at) ?? at + RateLimitParser.FallbackDelay;
+        }
+        catch (JsonException) { return null; }
+    }
     private static string? GetString(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static AgentState MapState(string? status, DateTime activity) => status?.ToLowerInvariant() switch
     {
