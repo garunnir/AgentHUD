@@ -45,6 +45,10 @@ VS Code가 꺼져 있으면 확장이 준비되기 전에 URI가 도착해 대�
 
 ## 실행
 
+빌드된 파일은 [Releases](https://github.com/garunnir/AgentHUD/releases)에서 받을 수 있습니다. `win-x64.zip`은 .NET 9 Desktop Runtime이 필요하고, `win-x64-self-contained.zip`은 런타임이 포함되어 있습니다. `v*` 태그를 push하면 GitHub Actions가 두 파일을 빌드해 릴리스를 만듭니다.
+
+소스에서 실행하려면:
+
 ```powershell
 dotnet run --project src/AgentHud/AgentHud.csproj
 ```

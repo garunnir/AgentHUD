@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Verify VirtualDesktopAccessor
+        shell: pwsh
+        run: ./scripts/update-vda.ps1 -Verify
+
+      - name: Registry checks
+        run: dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj -c Release
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $common = @('src/AgentHud/AgentHud.csproj', '-c', 'Release', '-r', 'win-x64', '-p:PublishSingleFile=true', '-p:DebugType=none', "-p:Version=$version")
+          dotnet publish @common --self-contained false -o publish/fd
+          dotnet publish @common --self-contained true -o publish/sc
+          foreach ($dir in 'publish/fd', 'publish/sc') { Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md $dir }
+          Compress-Archive publish/fd/* "AgentHud-${{ github.ref_name }}-win-x64.zip"
+          Compress-Archive publish/sc/* "AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            | 파일 | 설명 |
+            | --- | --- |
+            | `AgentHud-${{ github.ref_name }}-win-x64.zip` | [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) 필요 |
+            | `AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip` | 런타임 포함, 설치 없이 실행 |
+
+            압축을 풀고 `AgentHud.exe`를 실행하세요. `VirtualDesktopAccessor.dll`은 exe와 같은 폴더에 있어야 합니다. 요구 사항은 README를 참고하세요.
+          files: |
+            AgentHud-${{ github.ref_name }}-win-x64.zip
+            AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip
