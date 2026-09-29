@@ -47,7 +47,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // 숨긴 idle 세션은 새 활동이 생기거나 idle을 벗어나면 다시 표시
         foreach (var id in _dismissed.Keys.ToArray())
             if (all.FirstOrDefault(x => x.Id == id) is not { State: AgentState.Idle } s || s.LastActivityAt > _dismissed[id]) _dismissed.Remove(id);
-        var next = all.Where(x => !_dismissed.ContainsKey(x.Id) && (x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30))).ToArray();
+        var next = all.Where(x => x.HasUnreadCompletion || (!_dismissed.ContainsKey(x.Id) && (x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30)))).ToArray();
         for (var i = 0; i < next.Length; i++)
         {
             if (i >= Sessions.Count) Sessions.Add(next[i]);
@@ -59,7 +59,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleExpanded(); else DragMove(); }
     private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (ItemsControl.ContainerFromElement((ListBox)sender, (DependencyObject)e.OriginalSource) is ListBoxItem { DataContext: AgentSession session }) OpenInVsCode(session);
+        if (ItemsControl.ContainerFromElement((ListBox)sender, (DependencyObject)e.OriginalSource) is ListBoxItem { DataContext: AgentSession session })
+        {
+            _registry.AcknowledgeCompletion(session.Id);
+            OpenInVsCode(session);
+        }
         else ToggleExpanded();
     }
     private static async void OpenInVsCode(AgentSession session)

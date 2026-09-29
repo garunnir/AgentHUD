@@ -16,7 +16,67 @@ var recentIdle = a with { Id = "claude:recent", IsActive = false, LastActivityAt
 registry.Replace([older, a, recentIdle]);
 Assert(registry.GetAllAgents().Select(x => x.Id).SequenceEqual(["claude:recent", a.Id, "codex:older"]), "most recently active sessions are listed first");
 var testHome = Path.Combine(Path.GetTempPath(), "AgentHud-tests-" + Guid.NewGuid().ToString("N"));
+var completionRegistry = new AgentSessionRegistry();
+completionRegistry.Replace([a with { State = AgentState.Idle }]);
+Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "existing idle sessions do not notify on startup");
+completionRegistry.Replace([a]);
+completionRegistry.Replace([a with { State = AgentState.Idle }]);
+Assert(completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "work ending creates unread completion");
+completionRegistry.Replace([a with { State = AgentState.Idle, IsActive = false }]);
+Assert(completionRegistry.FindSession(a.Id)!.DisplayState == AgentState.Completed, "completion persists through refresh and inactivity");
+completionRegistry.Replace([]);
+Assert(completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "missing session retained until acknowledged");
+completionRegistry.AcknowledgeCompletion(a.Id);
+completionRegistry.Replace([a with { State = AgentState.Idle }]);
+Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "refresh does not re-notify acknowledged completion");
+completionRegistry.Replace([a]);
+completionRegistry.Replace([a with { State = AgentState.Idle }]);
+Assert(completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "next completion notifies again");
+foreach (var resumedState in new[] { AgentState.Starting, AgentState.Working, AgentState.Thinking })
+{
+    completionRegistry.Replace([a with { State = resumedState }]);
+    Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion
+        && completionRegistry.FindSession(a.Id)!.DisplayState == resumedState,
+        $"new work clears unread completion and displays {resumedState}");
+    completionRegistry.Update(a);
+    completionRegistry.Update(a with { State = AgentState.Idle });
+    Assert(completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "completion after resumed work notifies again");
+}
+completionRegistry.Update(a);
+Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "direct update also clears completion on new work");
+completionRegistry.Update(a with { State = AgentState.Idle });
+completionRegistry.AcknowledgeCompletion(a.Id);
+completionRegistry.Replace([a with { State = AgentState.Completed }]);
+completionRegistry.AcknowledgeCompletion(a.Id);
+completionRegistry.Replace([a with { State = AgentState.Completed }]);
+Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "explicit completion stays acknowledged");
 var sessionsRoot = Path.Combine(testHome, ".claude", "sessions");
+var clock = new TestTimeProvider();
+var expiring = new AgentSessionRegistry(clock);
+expiring.Replace([a]);
+expiring.Replace([a with { State = AgentState.Idle }]);
+clock.Now = clock.Now.AddMinutes(4).AddSeconds(59);
+expiring.Replace([a with { State = AgentState.Idle, LastActivityAt = a.LastActivityAt.AddMinutes(4) }]);
+Assert(expiring.FindSession(a.Id)!.HasUnreadCompletion, "completion remains blue before five minutes despite refresh");
+clock.Now = clock.Now.AddSeconds(1);
+expiring.Replace([a with { State = AgentState.Idle }]);
+Assert(!expiring.FindSession(a.Id)!.HasUnreadCompletion && expiring.FindSession(a.Id)!.DisplayState == AgentState.Idle,
+    "completion expires to idle at five minutes");
+expiring.Replace([a with { State = AgentState.Idle }]);
+Assert(!expiring.FindSession(a.Id)!.HasUnreadCompletion, "expired notification does not return on refresh");
+expiring.Update(a);
+expiring.Update(a with { State = AgentState.Completed });
+Assert(expiring.FindSession(a.Id)!.HasUnreadCompletion, "next task gets a fresh completion timer");
+clock.Now = clock.Now.AddMinutes(5);
+expiring.Update(a with { State = AgentState.Completed });
+Assert(expiring.FindSession(a.Id)!.DisplayState == AgentState.Idle, "explicit completed state displays idle after timeout");
+expiring.Update(a);
+expiring.Update(a with { State = AgentState.Idle });
+expiring.Replace([]);
+Assert(expiring.FindSession(a.Id)!.HasUnreadCompletion, "missing completion retained before timeout");
+clock.Now = clock.Now.AddMinutes(5);
+expiring.Replace([]);
+Assert(expiring.FindSession(a.Id) is null, "missing completion removed after timeout");
 Directory.CreateDirectory(sessionsRoot);
 try
 {
@@ -117,3 +177,9 @@ if (args.Contains("--discover"))
     Console.WriteLine($"HUD registry: {liveRegistry.GetAllAgents().Count} sessions, {liveRegistry.GetActiveAgents().Count} active");
 }
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }
+
+sealed class TestTimeProvider : TimeProvider
+{
+    public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+    public override DateTimeOffset GetUtcNow() => Now;
+}

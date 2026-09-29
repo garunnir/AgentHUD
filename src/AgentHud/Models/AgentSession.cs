@@ -5,6 +5,9 @@ public sealed record AgentSession
     public required string Id { get; init; }
     public required AgentType AgentType { get; init; }
     public AgentState State { get; init; }
+    public bool HasUnreadCompletion { get; init; }
+    public DateTimeOffset? CompletionDetectedAt { get; init; }
+    public AgentState DisplayState => HasUnreadCompletion ? AgentState.Completed : State == AgentState.Completed ? AgentState.Idle : State;
     public int? ProcessId { get; init; }
     public string? ProjectPath { get; init; }
     public string? WorktreePath { get; init; }

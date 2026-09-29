@@ -12,8 +12,10 @@ public sealed class StateBrushConverter : IValueConverter
         AgentState.Working or AgentState.Thinking => Brushes.LimeGreen,
         AgentState.WaitingForInput or AgentState.WaitingForApproval => Brushes.Gold,
         AgentState.Error => Brushes.OrangeRed,
-        AgentState.Idle or AgentState.Stopped or AgentState.Completed => Brushes.SlateGray,
-        _ => Brushes.DeepSkyBlue
-    } : Brushes.Gray;
+        AgentState.Completed => Brushes.DeepSkyBlue,
+        AgentState.Idle or AgentState.Stopped => Brushes.SlateGray,
+        AgentState.Starting => Brushes.LimeGreen,
+        _ => Brushes.MediumPurple
+    } : Brushes.MediumPurple;
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
