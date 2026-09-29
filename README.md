@@ -1,6 +1,6 @@
 ﻿# Agent HUD
 
-Windows 전체에서 실행되는 Claude Code와 Codex 세션을 자동 발견해 보여 주는 작은 WPF HUD입니다.
+여러 프로젝트에서 Claude Code나 Codex를 동시에 돌리다 보면 어느 창에서 어떤 에이전트가 일하고 있는지, 무엇이 끝나서 내 입력을 기다리는지 놓치기 쉽습니다. Agent HUD는 화면 한쪽에 항상 떠 있는 작은 패널로, 지금 PC에서 실행 중인 에이전트 세션을 프로젝트별로 자동으로 모아 상태와 함께 보여 줍니다. 따로 등록할 필요 없이 켜 두기만 하면 되고, 목록에서 세션을 더블클릭하면 해당 프로젝트의 VS Code 창과 대화로 바로 이동합니다.
 
 ![VS Code 위에 떠 있는 Agent HUD (오른쪽 AGENTS 패널)](docs/images/screenshot.png)
 
