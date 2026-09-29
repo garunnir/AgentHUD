@@ -1,8 +1,10 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using AgentHud.Discovery;
@@ -45,7 +47,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new(nameof(ActiveCount)));
     }
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleExpanded(); else DragMove(); }
-    private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e) => ToggleExpanded();
+    private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement((ListBox)sender, (DependencyObject)e.OriginalSource) is ListBoxItem { DataContext: AgentSession session }) OpenInVsCode(session);
+        else ToggleExpanded();
+    }
+    private static async void OpenInVsCode(AgentSession session)
+    {
+        var path = session.WorktreePath ?? session.ProjectPath;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
+        // 프로젝트 창을 먼저 활성화해야 vscode:// URI가 그 창으로 전달됨
+        try { using var code = Process.Start(new ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", "code", path }, CreateNoWindow = true, UseShellExecute = false }); if (code is not null) await code.WaitForExitAsync(); }
+        catch { ShellOpen("vscode://file/" + path.Replace('\\', '/')); }
+        if (ConversationUri(session) is { } uri) { await Task.Delay(700); ShellOpen(uri); }
+    }
+    private static string? ConversationUri(AgentSession session)
+    {
+        var sep = session.Id.IndexOf(':');
+        if (sep < 0) return null;
+        var id = Uri.EscapeDataString(session.Id[(sep + 1)..]);
+        return session.AgentType == AgentType.ClaudeCode ? $"vscode://anthropic.claude-code/open?session={id}" : $"vscode://openai.chatgpt/local/{id}";
+    }
+    private static void ShellOpen(string target) { try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch { } }
     private void ToggleExpanded()
     {
         if (!_expanded)
