@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -25,6 +25,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private VirtualDesktopFollower? _desktopFollower;
     private readonly Dictionary<string, DateTime> _dismissed = [];
     public ObservableCollection<AgentSession> Sessions { get; } = [];
+    private bool _showWaitingSymbols;
+    public bool ShowWaitingSymbols
+    {
+        get => _showWaitingSymbols;
+        set
+        {
+            if (_showWaitingSymbols == value) return;
+            _showWaitingSymbols = value;
+            PropertyChanged?.Invoke(this, new(nameof(ShowWaitingSymbols)));
+        }
+    }
+    private void WaitingSymbols_OnClick(object sender, RoutedEventArgs e) => SavePlacement();
     public int ActiveCount => Sessions.Count(x => x.IsActive);
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -111,7 +123,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _restoreSize = new Size(ActualWidth, ActualHeight);
             _anchorRight = Left + ActualWidth;
             MinWidth = MinHeight = 0;
-            Frame.Padding = new Thickness(8, 6, 8, 6);
+            Frame.Padding = new Thickness(4, 2, 4, 2);
             ResizeMode = ResizeMode.NoResize;
             SizeToContent = SizeToContent.WidthAndHeight;
         }
@@ -136,12 +148,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p)); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false);
 }
 

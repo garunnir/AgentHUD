@@ -32,7 +32,7 @@ Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "refresh does
 completionRegistry.Replace([a]);
 completionRegistry.Replace([a with { State = AgentState.Idle }]);
 Assert(completionRegistry.FindSession(a.Id)!.HasUnreadCompletion, "next completion notifies again");
-foreach (var resumedState in new[] { AgentState.Starting, AgentState.Working, AgentState.Thinking })
+foreach (var resumedState in new[] { AgentState.Starting, AgentState.Working, AgentState.Thinking, AgentState.WaitingForInput, AgentState.WaitingForApproval })
 {
     completionRegistry.Replace([a with { State = resumedState }]);
     Assert(!completionRegistry.FindSession(a.Id)!.HasUnreadCompletion
@@ -127,6 +127,36 @@ try
     found = await provider.DiscoverAsync(CancellationToken.None);
     Assert(!found.Single().IsActive && found[0].State == AgentState.Stopped, "dead process and invalid timestamp fallback");
 
+    async Task AppendClaudeBlock(string type, object block, string? sessionId = null)
+    {
+        await File.AppendAllTextAsync(transcript, System.Text.Json.JsonSerializer.Serialize(new {
+            type, sessionId = sessionId ?? titleId, message = new { content = new[] { block } }
+        }) + "\n");
+    }
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = titleId, status = "busy" }));
+    await AppendClaudeBlock("assistant", new { type = "tool_use", name = "AskUserQuestion", id = "ask-1" });
+    found = await provider.DiscoverAsync(CancellationToken.None);
+    Assert(found.Single().State == AgentState.WaitingForInput, "Claude question overrides busy metadata");
+    Assert(found.Single().SessionTitle == "변경된 대화 제목", "question scanning preserves title");
+    Assert((await new ClaudeCodeProvider(testHome).DiscoverAsync(CancellationToken.None)).Single().State == AgentState.WaitingForInput,
+        "Claude question detected after provider restart");
+    await AppendClaudeBlock("user", new { type = "tool_result", tool_use_id = "other", content = "done" });
+    await AppendClaudeBlock("user", new { type = "tool_result", tool_use_id = "ask-1", content = "answer" }, "other-session");
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.WaitingForInput,
+        "unrelated Claude tool results and sessions do not clear question");
+    await AppendClaudeBlock("user", new { type = "tool_result", tool_use_id = "ask-1", content = "answer" });
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+        "Claude answer restores metadata state");
+    await AppendClaudeBlock("assistant", new { type = "tool_use", name = "AskUserQuestion", id = "ask-2" });
+    await AppendClaudeBlock("user", new { type = "tool_result", tool_use_id = "ask-2", is_error = true, content = "cancelled" });
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+        "Claude cancelled question clears wait");
+    await AppendClaudeBlock("assistant", new { type = "tool_use", name = "AskUserQuestion", id = "ask-3" });
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = 2147483647, sessionId = titleId, status = "busy" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Stopped,
+        "pending Claude question does not override dead process");
     var codexRoot = Path.Combine(testHome, ".codex", "sessions");
     Directory.CreateDirectory(codexRoot);
     await File.WriteAllTextAsync(Path.Combine(codexRoot, "guardian.jsonl"),
@@ -170,6 +200,39 @@ try
     await AppendEvent("task_started");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(live.State == AgentState.Working, "next turn resumes working");
+    async Task AppendResponse(object payload)
+    {
+        await File.AppendAllTextAsync(livePath, System.Text.Json.JsonSerializer.Serialize(new {
+            timestamp = DateTime.UtcNow.ToString("O"), type = "response_item", payload
+        }) + "\n");
+    }
+    foreach (var name in new[] { "request_user_input", "functions.request_user_input" })
+    {
+        await AppendResponse(new { type = "function_call", name, call_id = "question" });
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForInput, "question tool enters input wait");
+        live = (await new CodexProvider(testHome).DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForInput, "question wait discovered on startup");
+        await AppendResponse(new { type = "function_call_output", call_id = "unrelated", output = "done" });
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForInput, "unrelated output does not answer question");
+        await AppendResponse(new { type = "function_call_output", call_id = "question", output = "answer" });
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.Working, "question response resumes work");
+    }
+    await AppendResponse(new { type = "function_call", name = "request_user_input_async", call_id = "async-question" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForInput, "async question waits for user");
+    await AppendResponse(new { type = "function_call_output", call_id = "async-question", output = "{\"accepted\":true}" });
+    await AppendResponse(new { type = "reasoning" });
+    await AppendEvent("task_complete");
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForInput, "async acceptance and turn completion do not answer question");
+    live = (await new CodexProvider(testHome).DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForInput, "async wait survives provider restart");
+    await AppendEvent("user_message");
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Working, "user message clears inferred async wait");
     await AppendEvent("turn_aborted");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(!live.IsActive && live.State == AgentState.Stopped, "aborted turn stops");

@@ -20,7 +20,7 @@ public sealed class AgentSessionRegistry
     private AgentSession TrackCompletion(AgentSession session)
     {
         _sessions.TryGetValue(session.Id, out var previous);
-        if (session.State is AgentState.Starting or AgentState.Working or AgentState.Thinking)
+        if (session.State is AgentState.Starting or AgentState.Working or AgentState.Thinking or AgentState.WaitingForInput or AgentState.WaitingForApproval)
             return session with { HasUnreadCompletion = false, CompletionDetectedAt = null };
         var completed = session.State is AgentState.Idle or AgentState.Completed
             && previous?.State is AgentState.Working or AgentState.Thinking or AgentState.WaitingForApproval;

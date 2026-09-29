@@ -7,7 +7,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
 {
     private readonly string _sessionsRoot;
     private readonly string _projectsRoot;
-    private readonly Dictionary<string, (long Length, DateTime Modified, string? Title)> _titles = [];
+    private readonly Dictionary<string, (long Length, DateTime Modified, TranscriptInfo Info)> _transcripts = [];
     private static readonly JsonSerializerOptions MetadataOptions = new() { PropertyNameCaseInsensitive = true };
     public AgentType AgentType => AgentType.ClaudeCode;
     public IEnumerable<string> WatchRoots => [_sessionsRoot, _projectsRoot];
@@ -37,10 +37,14 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 // VS Code can keep an unused conversation process ready before any messages exist.
                 if (data.Entrypoint == "claude-vscode" && state == AgentState.Idle
                     && Guid.TryParse(data.SessionId, out _) && !HasTranscript(data.SessionId)) continue;
+                var transcript = await ReadTranscriptAsync(data.SessionId, token);
+                if (alive && transcript.HasPendingQuestion
+                    && state is not (AgentState.Error or AgentState.Stopped or AgentState.WaitingForApproval))
+                    state = AgentState.WaitingForInput;
                 result.Add(new AgentSession
                 {
                     Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
-                    ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = await ReadTitleAsync(data.SessionId, token) ?? data.Name,
+                    ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
                     StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
                     State = state, IsActive = alive
                 });
@@ -59,10 +63,11 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             .Any(project => File.Exists(Path.Combine(project, sessionId + ".jsonl")));
     }
 
-    private async Task<string?> ReadTitleAsync(string sessionId, CancellationToken token)
+    private sealed record TranscriptInfo(string? Title = null, bool HasPendingQuestion = false);
+    private async Task<TranscriptInfo> ReadTranscriptAsync(string sessionId, CancellationToken token)
     {
         // Session IDs are filenames, never paths supplied by metadata.
-        if (!Guid.TryParse(sessionId, out _) || !Directory.Exists(_projectsRoot)) return null;
+        if (!Guid.TryParse(sessionId, out _) || !Directory.Exists(_projectsRoot)) return new();
         try
         {
             foreach (var project in Directory.EnumerateDirectories(_projectsRoot))
@@ -70,36 +75,52 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 var path = Path.Combine(project, sessionId + ".jsonl");
                 var info = new FileInfo(path);
                 if (!info.Exists) continue;
-                if (_titles.TryGetValue(path, out var cached) && cached.Length == info.Length && cached.Modified == info.LastWriteTimeUtc)
-                    return cached.Title;
+                if (_transcripts.TryGetValue(path, out var cached) && cached.Length == info.Length && cached.Modified == info.LastWriteTimeUtc)
+                    return cached.Info;
                 string? aiTitle = null, customTitle = null;
+                var pendingQuestions = new HashSet<string>();
                 await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
                 using var reader = new StreamReader(stream);
                 while (await reader.ReadLineAsync(token) is { } line)
                 {
-                    // Avoid parsing message/tool payloads; titles are small standalone records.
-                    if (!line.Contains("\"aiTitle\"", StringComparison.Ordinal) && !line.Contains("\"customTitle\"", StringComparison.Ordinal)) continue;
+                    // Only parse records relevant to titles or question lifecycle.
+                    if (!line.Contains("\"aiTitle\"", StringComparison.Ordinal) && !line.Contains("\"customTitle\"", StringComparison.Ordinal)
+                        && !line.Contains("\"tool_use\"", StringComparison.Ordinal) && !line.Contains("\"tool_result\"", StringComparison.Ordinal)) continue;
                     try
                     {
                         using var json = JsonDocument.Parse(line);
                         var root = json.RootElement;
                         if (!root.TryGetProperty("sessionId", out var id) || id.GetString() != sessionId) continue;
                         if (!root.TryGetProperty("type", out var type)) continue;
+                        if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
+                            && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var block in content.EnumerateArray())
+                            {
+                                if (type.GetString() == "assistant" && GetString(block, "type") == "tool_use"
+                                    && GetString(block, "name") == "AskUserQuestion" && GetString(block, "id") is { } questionId)
+                                    pendingQuestions.Add(questionId);
+                                else if (type.GetString() == "user" && GetString(block, "type") == "tool_result"
+                                    && GetString(block, "tool_use_id") is { } answeredId)
+                                    pendingQuestions.Remove(answeredId);
+                            }
+                        }
                         if (type.GetString() == "ai-title" && root.TryGetProperty("aiTitle", out var title) && title.ValueKind == JsonValueKind.String) aiTitle = title.GetString();
                         if (type.GetString() == "custom-title" && root.TryGetProperty("customTitle", out title) && title.ValueKind == JsonValueKind.String) customTitle = title.GetString();
                     }
                     catch (JsonException) { }
                 }
-                var result = !string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle;
-                _titles[path] = (info.Length, info.LastWriteTimeUtc, result);
+                var result = new TranscriptInfo(!string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle, pendingQuestions.Count > 0);
+                _transcripts[path] = (info.Length, info.LastWriteTimeUtc, result);
                 return result;
             }
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
-        return null;
+        return new();
     }
 
+    private static string? GetString(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static AgentState MapState(string? status, DateTime activity) => status?.ToLowerInvariant() switch
     {
         // Claude Code writes "busy" while a turn is in progress.

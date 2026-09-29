@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using AgentHud.Models;
 
@@ -54,6 +54,8 @@ public sealed class CodexProvider : IAgentProvider
                         StartedAt = ParseDate(GetString(payload, "timestamp")) ?? file.CreationTimeUtc,
                         LastActivityAt = ParseDate(GetString(root, "timestamp")) ?? ParseDate(GetString(payload, "timestamp")) ?? DateTime.MinValue, State = AgentState.Unknown
                     };
+                    var pendingQuestion = cached is not null && file.Length >= cached.Length ? cached.PendingQuestion : null;
+                    var pendingAsyncQuestion = cached is not null && file.Length >= cached.Length && cached.PendingAsyncQuestion;
                     // Windows may retain LastWriteTime while the writer keeps its handle open.
                     // Inspect a bounded tail when length changes, and use event timestamps.
                     await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
@@ -73,7 +75,14 @@ public sealed class CodexProvider : IAgentProvider
                             {
                                 session = session with { LastActivityAt = time };
                                 if (!item.TryGetProperty("payload", out var body)) continue;
-                                var state = (GetString(item, "type"), GetString(body, "type")) switch
+                                var kind = (GetString(item, "type"), GetString(body, "type"));
+                                var isQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
+                                    && GetString(body, "name") is "request_user_input" or "functions.request_user_input";
+                                var isAsyncQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
+                                    && GetString(body, "name") is "request_user_input_async" or "functions.request_user_input_async";
+                                var isAnswer = kind is ("response_item", "function_call_output" or "custom_tool_call_output")
+                                    && pendingQuestion is not null && GetString(body, "call_id") == pendingQuestion;
+                                var state = kind switch
                                 {
                                     ("event_msg", "task_started" or "user_message") => AgentState.Working,
                                     ("event_msg", "task_complete") => AgentState.Idle,
@@ -82,13 +91,31 @@ public sealed class CodexProvider : IAgentProvider
                                     ("response_item", "function_call" or "custom_tool_call") => AgentState.Working,
                                     _ => session.State
                                 };
+                                if (isQuestion)
+                                {
+                                    pendingQuestion = GetString(body, "call_id");
+                                    state = AgentState.WaitingForInput;
+                                }
+                                else if (isAnswer)
+                                {
+                                    pendingQuestion = null;
+                                    state = AgentState.Working;
+                                }
+                                else if (kind is ("event_msg", "task_started" or "user_message" or "task_complete" or "turn_aborted"))
+                                    pendingQuestion = null;
+                                if (isAsyncQuestion) pendingAsyncQuestion = true;
+                                // Async tool output acknowledges delivery, not a user answer.
+                                // Any subsequent user message ends this inferred waiting state.
+                                if (kind is ("event_msg", "user_message" or "turn_aborted"))
+                                    pendingAsyncQuestion = false;
+                                if (pendingAsyncQuestion) state = AgentState.WaitingForInput;
                                 session = session with { State = state };
                             }
                         }
                         catch (JsonException) { }
                     }
                     if (session.LastActivityAt == DateTime.MinValue) session = session with { LastActivityAt = file.LastWriteTimeUtc };
-                    cached = new(file.Length, file.LastWriteTimeUtc, session);
+                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion);
                     _cache[path] = cached;
                 }
                 var age = DateTime.UtcNow - cached.Session.LastActivityAt;
@@ -103,7 +130,7 @@ public sealed class CodexProvider : IAgentProvider
         foreach (var path in _cache.Keys.Where(path => !seen.Contains(path)).ToArray()) _cache.Remove(path);
         return result;
     }
-    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session);
+    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion);
     private async Task RefreshTitlesAsync(CancellationToken token)
     {
         try

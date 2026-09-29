@@ -19,8 +19,26 @@
       <Grid Background="Transparent" ToolTip="{Binding DisplayState}" AutomationProperties.Name="{Binding DisplayState}">
         <Ellipse x:Name="Dot" Width="11" Height="11" Style="{StaticResource StatusDot}" Fill="{Binding DisplayState, Converter={StaticResource StateBrush}}"/>
         <Path x:Name="Check" Visibility="Collapsed" Data="M 1,5 L 4,8 L 10,1" Width="10" Height="9" Stretch="Uniform" Stroke="{Binding DisplayState, Converter={StaticResource StateBrush}}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="Attention" Visibility="Collapsed" Text="?" FontSize="14" FontWeight="Bold" Foreground="{Binding DisplayState, Converter={StaticResource StateBrush}}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
       </Grid>
       <ControlTemplate.Triggers>
+        <MultiDataTrigger>
+          <MultiDataTrigger.Conditions>
+            <Condition Binding="{Binding DisplayState}" Value="{x:Static m:AgentState.WaitingForInput}"/>
+            <Condition Binding="{Binding DataContext.ShowWaitingSymbols, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+          </MultiDataTrigger.Conditions>
+          <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
+          <Setter TargetName="Attention" Property="Visibility" Value="Visible"/>
+        </MultiDataTrigger>
+        <MultiDataTrigger>
+          <MultiDataTrigger.Conditions>
+            <Condition Binding="{Binding DisplayState}" Value="{x:Static m:AgentState.WaitingForApproval}"/>
+            <Condition Binding="{Binding DataContext.ShowWaitingSymbols, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+          </MultiDataTrigger.Conditions>
+          <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
+          <Setter TargetName="Attention" Property="Visibility" Value="Visible"/>
+          <Setter TargetName="Attention" Property="Text" Value="!"/>
+        </MultiDataTrigger>
         <DataTrigger Binding="{Binding DisplayState}" Value="{x:Static m:AgentState.Starting}">
           <Setter TargetName="Dot" Property="Tag" Value="Pulsing"/>
         </DataTrigger>
@@ -38,6 +56,14 @@
     </ControlTemplate>
   </Window.Resources>
   <Border x:Name="Frame" CornerRadius="14" Background="#EE14171D" BorderBrush="#3AFFFFFF" BorderThickness="1" Padding="14">
+    <Border.ContextMenu>
+      <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+        <MenuItem Header="상세 설정">
+          <MenuItem Header="대기 상태를 기호로 표시 (? / !)" IsCheckable="True"
+                    IsChecked="{Binding ShowWaitingSymbols, Mode=TwoWay}" Click="WaitingSymbols_OnClick"/>
+        </MenuItem>
+      </ContextMenu>
+    </Border.ContextMenu>
     <Grid>
     <Grid x:Name="FullView">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -53,7 +79,7 @@
           <DataTemplate DataType="{x:Type m:AgentSession}">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBlock Grid.Column="3" Text="{Binding DisplayTitle}" ToolTip="{Binding DisplayTitle}" Foreground="#DCE3ED" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="6,0,0,0" VerticalAlignment="Center"/>
-              <ContentControl Width="12" Height="12" Focusable="False" Template="{StaticResource StatusIndicator}"/>
+              <ContentControl Width="12" Height="18" Focusable="False" Template="{StaticResource StatusIndicator}"/>
               <Viewbox Grid.Column="1" Width="16" Height="16" Margin="0,0,6,0" ToolTip="{Binding DisplayName}" AutomationProperties.Name="{Binding DisplayName}">
                 <Path Stretch="Uniform">
                   <Path.Style>
@@ -103,7 +129,7 @@
       <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate DataType="{x:Type m:AgentSession}">
-          <ContentControl Width="12" Height="12" Margin="3,2" Focusable="False" Template="{StaticResource StatusIndicator}" ToolTip="{Binding ProjectName}"/>
+          <ContentControl Width="12" Height="18" Margin="2,0" Focusable="False" Template="{StaticResource StatusIndicator}" ToolTip="{Binding ProjectName}"/>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>
