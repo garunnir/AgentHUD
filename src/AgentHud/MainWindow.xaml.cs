@@ -23,7 +23,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private Size _restoreSize;
     private double _anchorRight;
     private VirtualDesktopFollower? _desktopFollower;
-    private readonly Dictionary<string, DateTime> _dismissed = [];
+    // 숨긴 세션 ID → 마지막으로 본 표시 상태
+    private readonly Dictionary<string, AgentState> _dismissed = [];
+    public int HiddenCount => _dismissed.Count;
     public ObservableCollection<AgentSession> Sessions { get; } = [];
     private bool _showWaitingSymbols;
     public bool ShowWaitingSymbols
@@ -36,15 +38,42 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new(nameof(ShowWaitingSymbols)));
         }
     }
-    private void WaitingSymbols_OnClick(object sender, RoutedEventArgs e) => SavePlacement();
+    private readonly CodexProvider _codex;
+    public int CodexActiveMinutes
+    {
+        get => (int)_codex.ActiveWindow.TotalMinutes;
+        set
+        {
+            value = Math.Clamp(value, 1, 1440);
+            if (value == CodexActiveMinutes) return;
+            _codex.ActiveWindow = TimeSpan.FromMinutes(value);
+            PropertyChanged?.Invoke(this, new(nameof(CodexActiveMinutes)));
+            _ = _discovery.RefreshAsync(CancellationToken.None);
+        }
+    }
+    private SettingsWindow? _settingsWindow;
+    private void Settings_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_settingsWindow is not null) { _settingsWindow.Activate(); return; }
+        _settingsWindow = new SettingsWindow { Owner = this, DataContext = this };
+        _settingsWindow.Left = Math.Max(SystemParameters.VirtualScreenLeft, Left - _settingsWindow.Width - 8);
+        _settingsWindow.Top = Top;
+        _settingsWindow.Closed += (_, _) => { _settingsWindow = null; SavePlacement(); };
+        _settingsWindow.Show();
+    }
     public int ActiveCount => Sessions.Count(x => x.IsActive);
+    public MemoStore Memos { get; } = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "memos.json"));
+    // 메모 아이콘 MultiBinding 갱신용 카운터
+    public int MemoVersion { get; private set; }
+    private readonly Dictionary<string, MemoWindow> _memoWindows = [];
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public MainWindow()
     {
         InitializeComponent(); DataContext = this;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), new CodexProvider(home)], _registry);
+        _codex = new CodexProvider(home);
+        _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex], _registry);
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => _desktopFollower?.Dispose();
@@ -52,14 +81,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
         SizeChanged += (_, _) => { if (_minimized) Left = _anchorRight - ActualWidth; };
+        Memos.Changed += (_, _) => { MemoVersion++; PropertyChanged?.Invoke(this, new(nameof(MemoVersion))); };
     }
     private void UpdateSessions()
     {
         var all = _registry.GetAllAgents();
-        // 숨긴 idle 세션은 새 활동이 생기거나 idle을 벗어나면 다시 표시
-        foreach (var id in _dismissed.Keys.ToArray())
-            if (all.FirstOrDefault(x => x.Id == id) is not { State: AgentState.Idle } s || s.LastActivityAt > _dismissed[id]) _dismissed.Remove(id);
-        var next = all.Where(x => x.HasUnreadCompletion || (!_dismissed.ContainsKey(x.Id) && (x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30)))).ToArray();
+        // 숨긴 세션은 초기화 전까지 숨기되, 새로 대기·완료 상태가 되면 다시 표시
+        foreach (var (id, seen) in _dismissed.ToArray())
+        {
+            if (all.FirstOrDefault(x => x.Id == id) is not { } s) _dismissed.Remove(id);
+            else if (s.DisplayState != seen && NeedsAttention(s.DisplayState)) _dismissed.Remove(id);
+            else _dismissed[id] = s.DisplayState;
+        }
+        var next = all.Where(x => !_dismissed.ContainsKey(x.Id) && (x.HasUnreadCompletion || x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30))).ToArray();
         for (var i = 0; i < next.Length; i++)
         {
             if (i >= Sessions.Count) Sessions.Add(next[i]);
@@ -67,7 +101,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         while (Sessions.Count > next.Length) Sessions.RemoveAt(Sessions.Count - 1);
         PropertyChanged?.Invoke(this, new(nameof(ActiveCount)));
+        PropertyChanged?.Invoke(this, new(nameof(HiddenCount)));
     }
+    private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleExpanded(); else DragMove(); }
     private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -137,23 +173,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Width = _restoreSize.Width; Height = _restoreSize.Height;
         }
     }
+    private void Memo_OnClick(object sender, RoutedEventArgs e) => ShowMemo("", "메모장", Memos.Global, Memos.SetGlobal);
+    private void ProjectMemo_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: AgentSession session }) ShowProjectMemo(session);
+    }
+    private void MemoIcon_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: AgentSession session }) return;
+        e.Handled = true;
+        ShowProjectMemo(session);
+    }
+    private void ShowProjectMemo(AgentSession session)
+    {
+        if (session.ProjectPath is not { } path || string.IsNullOrWhiteSpace(path)) return;
+        ShowMemo("project:" + path.ToUpperInvariant(), "메모 · " + session.ProjectName, Memos.GetProject(path) ?? "", text => Memos.SetProject(path, text));
+    }
+    // 같은 대상의 메모 창이 이미 열려 있으면 앞으로 가져오고, 없으면 HUD 왼쪽에 새로 연다
+    private void ShowMemo(string key, string header, string text, Action<string> save)
+    {
+        if (_memoWindows.TryGetValue(key, out var open)) { open.Activate(); return; }
+        var w = new MemoWindow(header, text, save) { Owner = this };
+        w.Left = Math.Max(SystemParameters.VirtualScreenLeft, Left - w.Width - 8 - _memoWindows.Count * 24);
+        w.Top = Top + _memoWindows.Count * 24;
+        w.Closed += (_, _) => _memoWindows.Remove(key);
+        _memoWindows[key] = w;
+        w.Show();
+    }
     private void Dismiss_OnClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: AgentSession { State: AgentState.Idle } session }) return;
-        _dismissed[session.Id] = session.LastActivityAt;
+        if (sender is not FrameworkElement { DataContext: AgentSession session }) return;
+        // 완료 표시는 확인 처리해 숨긴 직후 다시 나타나지 않게 함
+        _dismissed[session.Id] = session.HasUnreadCompletion ? AgentState.Idle : session.DisplayState;
+        if (session.HasUnreadCompletion) _registry.AcknowledgeCompletion(session.Id);
         UpdateSessions();
     }
+    private void ResetHidden_OnClick(object sender, RoutedEventArgs e) { _dismissed.Clear(); UpdateSessions(); }
     private void Close_OnClick(object sender, RoutedEventArgs e) => Close();
-    private async void OnClosing(object? sender, CancelEventArgs e) { SavePlacement(); await _discovery.DisposeAsync(); }
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        foreach (var w in _memoWindows.Values.ToArray()) w.Close();
+        SavePlacement();
+        await _discovery.DisposeAsync();
+    }
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5);
 }
 

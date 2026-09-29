@@ -58,10 +58,15 @@
   <Border x:Name="Frame" CornerRadius="14" Background="#EE14171D" BorderBrush="#3AFFFFFF" BorderThickness="1" Padding="14">
     <Border.ContextMenu>
       <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-        <MenuItem Header="상세 설정">
-          <MenuItem Header="대기 상태를 기호로 표시 (? / !)" IsCheckable="True"
-                    IsChecked="{Binding ShowWaitingSymbols, Mode=TwoWay}" Click="WaitingSymbols_OnClick"/>
+        <MenuItem Header="{Binding HiddenCount}" HeaderStringFormat="숨긴 세션 다시 표시 ({0})" Click="ResetHidden_OnClick">
+          <MenuItem.Style>
+            <Style TargetType="MenuItem">
+              <Style.Triggers><DataTrigger Binding="{Binding HiddenCount}" Value="0"><Setter Property="IsEnabled" Value="False"/></DataTrigger></Style.Triggers>
+            </Style>
+          </MenuItem.Style>
         </MenuItem>
+        <Separator/>
+        <MenuItem Header="설정..." Click="Settings_OnClick"/>
       </ContextMenu>
     </Border.ContextMenu>
     <Grid>
@@ -71,13 +76,20 @@
         <TextBlock Text="AGENTS" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"/>
         <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="Close"/>
         <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="최소화"/>
+        <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="메모장"/>
         <TextBlock Text="{Binding ActiveCount}" Foreground="White" FontWeight="Bold" Margin="8,0,0,0"/>
       </DockPanel>
       <ListBox Grid.Row="1" ItemsSource="{Binding Sessions}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="List_OnMouseDoubleClick">
         <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0,4"/><Setter Property="Background" Value="Transparent"/></Style></ListBox.ItemContainerStyle>
         <ListBox.ItemTemplate>
           <DataTemplate DataType="{x:Type m:AgentSession}">
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid Background="Transparent">
+              <Grid.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="프로젝트 메모..." Click="ProjectMemo_OnClick"/>
+                </ContextMenu>
+              </Grid.ContextMenu>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBlock Grid.Column="3" Text="{Binding DisplayTitle}" ToolTip="{Binding DisplayTitle}" Foreground="#DCE3ED" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="6,0,0,0" VerticalAlignment="Center"/>
               <ContentControl Width="12" Height="18" Focusable="False" Template="{StaticResource StatusIndicator}"/>
               <Viewbox Grid.Column="1" Width="16" Height="16" Margin="0,0,6,0" ToolTip="{Binding DisplayName}" AutomationProperties.Name="{Binding DisplayName}">
@@ -96,7 +108,25 @@
                   </Path.Style>
                 </Path>
               </Viewbox>
-              <TextBlock Grid.Column="2" Text="{Binding ProjectName}" ToolTip="{Binding ProjectPath}" Foreground="#AEB8C6" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <DockPanel Grid.Column="2">
+                <TextBlock DockPanel.Dock="Right" Text="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="#91A0B5" Margin="4,0,0,0" VerticalAlignment="Center" Background="Transparent" MouseLeftButtonDown="MemoIcon_OnMouseLeftButtonDown" Cursor="Hand">
+                  <TextBlock.Visibility>
+                    <MultiBinding Converter="{StaticResource ProjectMemo}">
+                      <Binding Path="ProjectPath"/>
+                      <Binding Path="DataContext.Memos" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                      <Binding Path="DataContext.MemoVersion" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                    </MultiBinding>
+                  </TextBlock.Visibility>
+                  <TextBlock.ToolTip>
+                    <MultiBinding Converter="{StaticResource ProjectMemo}" ConverterParameter="Text">
+                      <Binding Path="ProjectPath"/>
+                      <Binding Path="DataContext.Memos" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                      <Binding Path="DataContext.MemoVersion" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                    </MultiBinding>
+                  </TextBlock.ToolTip>
+                </TextBlock>
+                <TextBlock Text="{Binding ProjectName}" ToolTip="{Binding ProjectPath}" Foreground="#AEB8C6" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              </DockPanel>
               <Grid Grid.Column="4" Margin="8,0,0,0">
                 <TextBlock x:Name="StateText" Text="{Binding DisplayState}" Foreground="#AEB8C6" FontSize="11" VerticalAlignment="Center"/>
                 <Button x:Name="DismissButton" Content="×" Click="Dismiss_OnClick" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" ToolTip="HUD에서 숨기기" Focusable="False">
@@ -110,15 +140,10 @@
               </Grid>
             </Grid>
             <DataTemplate.Triggers>
-              <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                  <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True"/>
-                  <Condition Binding="{Binding State}" Value="{x:Static m:AgentState.Idle}"/>
-                  <Condition Binding="{Binding HasUnreadCompletion}" Value="False"/>
-                </MultiDataTrigger.Conditions>
+              <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
                 <Setter TargetName="StateText" Property="Visibility" Value="Hidden"/>
                 <Setter TargetName="DismissButton" Property="Visibility" Value="Visible"/>
-              </MultiDataTrigger>
+              </DataTrigger>
             </DataTemplate.Triggers>
           </DataTemplate>
         </ListBox.ItemTemplate>

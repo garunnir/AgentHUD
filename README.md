@@ -12,7 +12,7 @@
 
 ![최소화 모드에서 나올 수 있는 모든 상태 표시: 파란 점(작업 중, 깜박임), 노란 점 또는 ?/!(입력·승인 대기), 초록 체크(방금 끝남), 회색 점(쉬는 중), 주황빨강 점(오류), 보라 점(알 수 없음)](docs/images/hud-mini-states.svg)
 
-`?`/`!` 기호는 HUD 우클릭 → **상세 설정 → 대기 상태를 기호로 표시**를 켰을 때만 나오며, 끄면 두 대기 상태 모두 노란 점입니다.
+`?`/`!` 기호는 HUD 우클릭 → **설정... → 대기 상태를 기호로 표시**를 켰을 때만 나오며, 끄면 두 대기 상태 모두 노란 점입니다.
 
 ## 현재 MVP
 
@@ -26,6 +26,8 @@
 - 세션 항목 더블클릭 시 해당 프로젝트(Git 루트, 없으면 cwd)를 VS Code로 열고 확장 URI(`anthropic.claude-code/open?session=`, `openai.chatgpt/local/`)로 대화 탭 열기 (사이드바 대화는 전환 불가, [조사 기록](docs/vscode-session-open.md))
 - 헤더 `–` 버튼으로 상태 점만 가로로 표시하는 최소화 모드 (오른쪽 끝 고정, 더블클릭 복원)
 - `PinWindow`으로 HUD 창을 모든 Windows 가상 데스크톱에 표시
+- 세션에 마우스를 올리면 나오는 `×`로 상태와 관계없이 HUD에서 숨기기. 숨긴 세션은 새로 입력·승인 대기나 완료 상태가 되면 다시 표시되고, HUD 우클릭 → **숨긴 세션 다시 표시**로 한 번에 복원 (숨김 기록은 재시작 시 초기화)
+- 헤더 메모 버튼으로 자유 메모장, 세션 우클릭 → **프로젝트 메모...**로 프로젝트별 메모 (메모가 있는 프로젝트는 이름 옆 아이콘 표시, 아이콘 클릭으로 열기, `%LOCALAPPDATA%\AgentHud\memos.json`에 저장)
 
 ## 요구 사항
 
@@ -78,7 +80,7 @@ dotnet build AgentHud.sln
 dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj
 ```
 
-Codex는 파일 크기와 수정 시각으로 변경을 감지하고, 변경된 로그의 마지막 256KB에서 이벤트 시각과 상태를 읽습니다. Windows에서 파일 수정 시각이 갱신되지 않아도 크기가 증가하면 반영됩니다. `task_started`는 Working, reasoning은 Thinking, `task_complete`는 Idle, `turn_aborted`는 Stopped로 표시합니다. 스레드별 PID 연결은 아직 없으므로 최근 5분 이내 이벤트가 있는 세션을 활성으로 추정합니다. 장시간 이벤트가 없는 작업이나 대기 세션의 생존 여부는 확정하지 못합니다. Claude/Codex 내부 포맷이 바뀌면 provider만 수정하면 됩니다.
+Codex는 파일 크기와 수정 시각으로 변경을 감지하고, 변경된 로그의 마지막 256KB에서 이벤트 시각과 상태를 읽습니다. Windows에서 파일 수정 시각이 갱신되지 않아도 크기가 증가하면 반영됩니다. `task_started`는 Working, reasoning은 Thinking, `task_complete`는 Idle, `turn_aborted`는 Stopped로 표시합니다. 스레드별 PID 연결은 아직 없으므로 최근 이벤트가 활성 유지 시간(기본 5분, HUD 우클릭 → 설정...에서 1–1440분으로 변경) 이내인 세션을 활성으로 추정합니다. 장시간 이벤트가 없는 작업이나 대기 세션의 생존 여부는 확정하지 못합니다. Claude/Codex 내부 포맷이 바뀌면 provider만 수정하면 됩니다.
 
 가상 데스크톱 고정에는 MIT 라이선스의 `VirtualDesktopAccessor.dll`을 사용합니다. 창 표시 후 고정하고 5초마다 재확인합니다. 고정 API가 실패하면 Windows의 `IVirtualDesktopManager`로 현재 활성 창의 데스크톱을 확인해 HUD를 이동합니다(250ms 간격). 전환한 데스크톱에 활성 창이 없으면 창을 활성화할 때까지 이동이 지연될 수 있습니다.
 
@@ -92,4 +94,4 @@ HUD 실행 중 작업/추론/승인 대기에서 Idle 또는 Completed로 바뀌
 
 버그 제보와 PR을 환영합니다. [CONTRIBUTING.md](CONTRIBUTING.md)를 참고해 주세요.
 
-질문·승인 대기는 기본적으로 일반·최소화 화면에서 노란색 원으로 표시합니다. HUD 우클릭 → 상세 설정 → 대기 상태를 기호로 표시 (? / !)를 켜면 질문은 물음표(?), 승인은 느낌표(!)로 전환됩니다. 설정은 즉시 반영되며 재시작 후에도 유지됩니다. Codex는 동기 질문 도구인 request_user_input 호출을 감지하고, 동일한 call_id의 응답을 받으면 작업 상태로 돌아갑니다. 비동기 질문(request_user_input_async)은 호출부터 다음 사용자 메시지 또는 중단까지 질문 대기로 추정합니다. accepted 응답이나 작업 완료 이벤트로는 해제하지 않습니다. 이 동안 다른 작업이 진행되어도 물음표를 우선 표시하며, 일반 메시지에 적힌 질문은 감지하지 않습니다. Claude는 메타데이터의 waiting/waiting_for_input 상태와 대화 로그의 AskUserQuestion 호출을 감지합니다. 질문 도구 ID에 대응하는 tool_result(답변·취소)가 기록되면 로그 기반 질문 대기를 해제하고 메타데이터 상태를 표시합니다.
+질문·승인 대기는 기본적으로 일반·최소화 화면에서 노란색 원으로 표시합니다. HUD 우클릭 → 설정... → 대기 상태를 기호로 표시 (? / !)를 켜면 질문은 물음표(?), 승인은 느낌표(!)로 전환됩니다. 설정은 즉시 반영되며 재시작 후에도 유지됩니다. Codex는 동기 질문 도구인 request_user_input 호출을 감지하고, 동일한 call_id의 응답을 받으면 작업 상태로 돌아갑니다. 비동기 질문(request_user_input_async)은 호출부터 다음 사용자 메시지 또는 중단까지 질문 대기로 추정합니다. accepted 응답이나 작업 완료 이벤트로는 해제하지 않습니다. 이 동안 다른 작업이 진행되어도 물음표를 우선 표시하며, 일반 메시지에 적힌 질문은 감지하지 않습니다. Claude는 메타데이터의 waiting/waiting_for_input 상태와 대화 로그의 AskUserQuestion 호출을 감지합니다. 질문 도구 ID에 대응하는 tool_result(답변·취소)가 기록되면 로그 기반 질문 대기를 해제하고 메타데이터 상태를 표시합니다.

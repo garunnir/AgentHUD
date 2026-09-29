@@ -11,6 +11,13 @@ public sealed class CodexProvider : IAgentProvider
     private Dictionary<string, string> _titles = [];
     private (long Length, DateTime Modified)? _indexStamp;
     private readonly Dictionary<string, CachedSession> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private long _activeWindowTicks = TimeSpan.FromMinutes(5).Ticks;
+    // 마지막 이벤트 후 이 시간 안이면 활성으로 추정 (UI 스레드에서 변경, 탐색 스레드에서 읽음)
+    public TimeSpan ActiveWindow
+    {
+        get => TimeSpan.FromTicks(Interlocked.Read(ref _activeWindowTicks));
+        set => Interlocked.Exchange(ref _activeWindowTicks, value.Ticks);
+    }
     public AgentType AgentType => AgentType.Codex;
     public IEnumerable<string> WatchRoots => [_sessionsRoot];
     public CodexProvider(string home)
@@ -119,9 +126,10 @@ public sealed class CodexProvider : IAgentProvider
                     _cache[path] = cached;
                 }
                 var age = DateTime.UtcNow - cached.Session.LastActivityAt;
+                var activeWindow = ActiveWindow;
                 // Without a per-thread PID, recent event activity is evidence, not proof of liveness.
-                if (age <= TimeSpan.FromMinutes(30))
-                    result.Add(cached.Session with { SessionTitle = _titles.GetValueOrDefault(cached.Session.Id), IsActive = cached.Session.State != AgentState.Stopped && age <= TimeSpan.FromMinutes(5) });
+                if (age <= TimeSpan.FromMinutes(30) || age <= activeWindow)
+                    result.Add(cached.Session with { SessionTitle = _titles.GetValueOrDefault(cached.Session.Id), IsActive = cached.Session.State != AgentState.Stopped && age <= activeWindow });
             }
             catch (JsonException) { }
             catch (IOException) { }

@@ -233,11 +233,35 @@ try
     await AppendEvent("user_message");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(live.State == AgentState.Working, "user message clears inferred async wait");
+    codex.ActiveWindow = TimeSpan.Zero;
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(!live.IsActive, "configured active window expires recent session");
+    codex.ActiveWindow = TimeSpan.FromHours(2);
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.IsActive, "longer active window keeps session active");
     await AppendEvent("turn_aborted");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(!live.IsActive && live.State == AgentState.Stopped, "aborted turn stops");
 }
 finally { Directory.Delete(testHome, recursive: true); }
+var memoPath = Path.Combine(Path.GetTempPath(), "AgentHud-memos-" + Guid.NewGuid().ToString("N") + ".json");
+try
+{
+    var memos = new AgentHud.MemoStore(memoPath);
+    var changes = 0;
+    memos.Changed += (_, _) => changes++;
+    memos.SetGlobal("todo");
+    memos.SetProject("C:\\Repo\\", "project note");
+    Assert(memos.HasProject("c:\\repo") && memos.GetProject("C:\\Repo") == "project note", "project memo lookup ignores case and trailing separator");
+    Assert(!memos.HasProject("C:\\other") && !memos.HasProject(null), "missing project memo");
+    memos.SetGlobal("todo");
+    Assert(changes == 2, "unchanged memo does not save");
+    var reloaded = new AgentHud.MemoStore(memoPath);
+    Assert(reloaded.Global == "todo" && reloaded.GetProject("c:\\REPO") == "project note", "memos persist across reload");
+    reloaded.SetProject("C:\\Repo", "  ");
+    Assert(!new AgentHud.MemoStore(memoPath).HasProject("C:\\Repo"), "blank project memo removes it");
+}
+finally { File.Delete(memoPath); }
 Console.WriteLine("All registry and discovery checks passed.");
 
 if (args.Contains("--discover"))

@@ -1,0 +1,12 @@
+<Window x:Class="AgentHud.MemoWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="280" Height="240" MinWidth="180" MinHeight="120" WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False">
+  <Border CornerRadius="14" Background="#EE14171D" BorderBrush="#3AFFFFFF" BorderThickness="1" Padding="14">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <DockPanel MouseLeftButtonDown="Header_OnMouseLeftButtonDown" Background="Transparent">
+        <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="닫기"/>
+        <TextBlock x:Name="HeaderText" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+      </DockPanel>
+      <TextBox x:Name="Editor" Grid.Row="1" Margin="0,8,0,0" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" SelectionBrush="#5591A0B5" BorderThickness="0" Padding="6" FontSize="12"/>
+    </Grid>
+  </Border>
+</Window>
