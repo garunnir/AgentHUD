@@ -1,0 +1,33 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Verify VirtualDesktopAccessor
+        shell: pwsh
+        run: ./scripts/update-vda.ps1 -Verify
+
+      - name: Restore
+        run: dotnet restore AgentHud.sln
+
+      - name: Build
+        run: dotnet build AgentHud.sln -c Release --no-restore
+
+      - name: Registry checks
+        run: dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj -c Release

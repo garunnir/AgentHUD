@@ -1,0 +1,11 @@
+{
+  "dotnet.defaultSolution": "AgentHud.sln",
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  }
+}

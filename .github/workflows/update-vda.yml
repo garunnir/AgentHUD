@@ -1,0 +1,59 @@
+name: Update VirtualDesktopAccessor
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 매주 월요일 09:00 KST
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '특정 릴리스 태그 (비우면 최신 안정 릴리스)'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-vda
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Detect and verify a new release
+        id: vda
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/update-vda.ps1 -Tag '${{ inputs.tag }}'
+
+      - name: Build with updated DLL
+        if: steps.vda.outputs.updated == 'true'
+        run: dotnet build AgentHud.sln -c Release
+
+      - name: Create pull request
+        if: steps.vda.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: deps/virtualdesktopaccessor
+          delete-branch: true
+          commit-message: 'Update VirtualDesktopAccessor to ${{ steps.vda.outputs.tag }}'
+          title: 'Update VirtualDesktopAccessor to ${{ steps.vda.outputs.tag }}'
+          body: |
+            VirtualDesktopAccessor의 새 안정 릴리스를 자동 감지했습니다.
+
+            - Release: ${{ steps.vda.outputs.release_url }}
+            - x64 PE 및 SHA-256 검증 완료
+            - AgentHUD Release 빌드 완료
+          labels: dependencies
+          add-paths: |
+            src/AgentHud/native/VirtualDesktopAccessor.dll
+            src/AgentHud/native/vda.json
+            THIRD_PARTY_NOTICES.md
