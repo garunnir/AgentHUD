@@ -2,6 +2,8 @@
 
 Windows 전체에서 실행되는 Claude Code와 Codex 세션을 자동 발견해 보여 주는 작은 WPF HUD입니다.
 
+![VS Code 위에 떠 있는 Agent HUD (오른쪽 AGENTS 패널)](docs/images/screenshot.png)
+
 ## 현재 MVP
 
 - 실제 Claude `~/.claude/sessions/*.json` 메타데이터(PID, sessionId, cwd, status)를 읽고 프로세스 생존 여부와 결합
