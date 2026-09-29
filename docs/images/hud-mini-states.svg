@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="640" height="456" viewBox="0 0 640 456" role="img" aria-label="Agent HUD 최소화 모드 상태 표시 범례">
+  <style>
+    text { font-family: "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+    .label { fill: #91A0B5; font-size: 12px; font-weight: 600; letter-spacing: 1.2px; }
+    .sub { fill: #6F7C8F; font-size: 12px; }
+    .state { fill: #DCE3ED; font-family: Consolas, "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
+    .desc { fill: #AEB8C6; font-size: 13px; }
+    .desc b { fill: #FFFFFF; }
+    .sym { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; font-weight: 700; }
+    .pulse { animation: pulse .9s ease-in-out infinite alternate; }
+    @keyframes pulse { from { opacity: 1; } to { opacity: .45; } }
+    @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  </style>
+  <defs>
+    <!-- 앱의 StatusIndicator(12×18)와 같은 좌표 -->
+    <circle id="dot" cx="6" cy="9" r="5.5"/>
+    <polyline id="check" points="1,9.55 4.33,12.89 11,5.11" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text id="q" class="sym" x="6" y="9.6" text-anchor="middle" dominant-baseline="central">?</text>
+    <text id="ex" class="sym" x="6" y="9.6" text-anchor="middle" dominant-baseline="central">!</text>
+  </defs>
+
+  <rect width="640" height="456" rx="12" fill="#1B2029"/>
+
+  <text class="label" x="24" y="34">AGENT HUD · 최소화 모드</text>
+  <text class="sub" x="24" y="54">세션마다 표시 하나 · 2배 확대</text>
+
+  <!-- 예시 미니 바: 세션 10개, 기본(점) 표시 -->
+  <rect x="280.5" y="16.5" width="335" height="43" rx="21.5" fill="#14171D" stroke="#FFFFFF" stroke-opacity=".23"/>
+  <g transform="translate(292 20) scale(2)">
+    <use xlink:href="#dot" x="0"   fill="#00BFFF" class="pulse"/>
+    <use xlink:href="#dot" x="16"  fill="#00BFFF" class="pulse"/>
+    <use xlink:href="#dot" x="32"  fill="#00BFFF" class="pulse"/>
+    <use xlink:href="#dot" x="48"  fill="#FFD700"/>
+    <use xlink:href="#dot" x="64"  fill="#FFD700"/>
+    <use xlink:href="#check" x="80" stroke="#32CD32"/>
+    <use xlink:href="#dot" x="96"  fill="#708090"/>
+    <use xlink:href="#dot" x="112" fill="#708090"/>
+    <use xlink:href="#dot" x="128" fill="#FF4500"/>
+    <use xlink:href="#dot" x="144" fill="#9370DB"/>
+  </g>
+
+  <line x1="24" y1="80" x2="616" y2="80" stroke="#FFFFFF" stroke-opacity=".1"/>
+
+  <!-- 범례: 행 높이 44, 아이콘 24×36 -->
+  <g transform="translate(24 94) scale(2)"><use xlink:href="#dot" fill="#00BFFF" class="pulse"/></g>
+  <text class="state" x="68" y="117">Starting · Working · Thinking</text>
+  <text class="desc" x="330" y="117"><tspan fill="#FFFFFF">작업 중</tspan> · 깜박임, 기다리면 됨</text>
+
+  <g transform="translate(24 138) scale(2)"><use xlink:href="#dot" fill="#FFD700"/></g>
+  <text class="state" x="68" y="161">WaitingForInput · Approval</text>
+  <text class="desc" x="330" y="161"><tspan fill="#FFFFFF">내 차례</tspan> · 답변이나 승인 필요</text>
+
+  <g transform="translate(24 182) scale(2)"><use xlink:href="#q" fill="#FFD700"/></g>
+  <text class="state" x="68" y="205">WaitingForInput</text>
+  <text class="desc" x="330" y="205"><tspan fill="#FFFFFF">질문 답변 대기</tspan> · 기호 표시 켰을 때</text>
+
+  <g transform="translate(24 226) scale(2)"><use xlink:href="#ex" fill="#FFD700"/></g>
+  <text class="state" x="68" y="249">WaitingForApproval</text>
+  <text class="desc" x="330" y="249"><tspan fill="#FFFFFF">실행 승인 대기</tspan> · 기호 표시 켰을 때</text>
+
+  <g transform="translate(24 270) scale(2)"><use xlink:href="#check" stroke="#32CD32"/></g>
+  <text class="state" x="68" y="293">Completed</text>
+  <text class="desc" x="330" y="293"><tspan fill="#FFFFFF">방금 끝남</tspan> · 열거나 5분 뒤 회색으로</text>
+
+  <g transform="translate(24 314) scale(2)"><use xlink:href="#dot" fill="#708090"/></g>
+  <text class="state" x="68" y="337">Idle · Stopped</text>
+  <text class="desc" x="330" y="337"><tspan fill="#FFFFFF">쉬는 중</tspan> · 대기 또는 종료</text>
+
+  <g transform="translate(24 358) scale(2)"><use xlink:href="#dot" fill="#FF4500"/></g>
+  <text class="state" x="68" y="381">Error</text>
+  <text class="desc" x="330" y="381"><tspan fill="#FFFFFF">오류</tspan> · 세션을 열어 확인</text>
+
+  <g transform="translate(24 402) scale(2)"><use xlink:href="#dot" fill="#9370DB"/></g>
+  <text class="state" x="68" y="425">Unknown</text>
+  <text class="desc" x="330" y="425"><tspan fill="#FFFFFF">알 수 없음</tspan> · 상태를 아직 못 읽음</text>
+</svg>
