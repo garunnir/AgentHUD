@@ -19,7 +19,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly AgentDiscoveryService _discovery;
     private bool _expanded;
     private Size _compactSize = new(280, 220);
+    private bool _minimized;
+    private Size _restoreSize;
+    private double _anchorRight;
     private VirtualDesktopFollower? _desktopFollower;
+    private readonly Dictionary<string, DateTime> _dismissed = [];
     public ObservableCollection<AgentSession> Sessions { get; } = [];
     public int ActiveCount => Sessions.Count(x => x.IsActive);
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -34,10 +38,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Closed += (_, _) => _desktopFollower?.Dispose();
         Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); };
         Closing += OnClosing;
+        // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
+        SizeChanged += (_, _) => { if (_minimized) Left = _anchorRight - ActualWidth; };
     }
     private void UpdateSessions()
     {
-        var next = _registry.GetAllAgents().Where(x => x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30)).ToArray();
+        var all = _registry.GetAllAgents();
+        // 숨긴 idle 세션은 새 활동이 생기거나 idle을 벗어나면 다시 표시
+        foreach (var id in _dismissed.Keys.ToArray())
+            if (all.FirstOrDefault(x => x.Id == id) is not { State: AgentState.Idle } s || s.LastActivityAt > _dismissed[id]) _dismissed.Remove(id);
+        var next = all.Where(x => !_dismissed.ContainsKey(x.Id) && (x.IsActive || DateTime.UtcNow - x.LastActivityAt.ToUniversalTime() < TimeSpan.FromSeconds(30))).ToArray();
         for (var i = 0; i < next.Length; i++)
         {
             if (i >= Sessions.Count) Sessions.Add(next[i]);
@@ -80,6 +90,43 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         else { Width = _compactSize.Width; Height = _compactSize.Height; }
         _expanded = !_expanded;
     }
+    private void Minimize_OnClick(object sender, RoutedEventArgs e) => ToggleMinimized();
+    private void Mini_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2) { ToggleMinimized(); return; }
+        DragMove();
+        _anchorRight = Left + ActualWidth;
+    }
+    private void ToggleMinimized()
+    {
+        _minimized = !_minimized;
+        FullView.Visibility = _minimized ? Visibility.Collapsed : Visibility.Visible;
+        MiniView.Visibility = _minimized ? Visibility.Visible : Visibility.Collapsed;
+        if (_minimized)
+        {
+            _restoreSize = new Size(ActualWidth, ActualHeight);
+            _anchorRight = Left + ActualWidth;
+            MinWidth = MinHeight = 0;
+            Frame.Padding = new Thickness(8, 6, 8, 6);
+            ResizeMode = ResizeMode.NoResize;
+            SizeToContent = SizeToContent.WidthAndHeight;
+        }
+        else
+        {
+            SizeToContent = SizeToContent.Manual;
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            Frame.Padding = new Thickness(14);
+            MinWidth = 240; MinHeight = 100;
+            Left = _anchorRight - _restoreSize.Width;
+            Width = _restoreSize.Width; Height = _restoreSize.Height;
+        }
+    }
+    private void Dismiss_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: AgentSession { State: AgentState.Idle } session }) return;
+        _dismissed[session.Id] = session.LastActivityAt;
+        UpdateSessions();
+    }
     private void Close_OnClick(object sender, RoutedEventArgs e) => Close();
     private async void OnClosing(object? sender, CancelEventArgs e) { SavePlacement(); await _discovery.DisposeAsync(); }
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
@@ -89,7 +136,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(new Placement(Left, Top, ActualWidth, ActualHeight))); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p)); } catch { }
     }
     private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220);
 }

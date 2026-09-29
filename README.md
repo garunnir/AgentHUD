@@ -4,6 +4,12 @@
 
 ![VS Code 위에 떠 있는 Agent HUD (오른쪽 AGENTS 패널)](docs/images/screenshot.png)
 
+| 기본 패널 | 최소화 |
+| --- | --- |
+| ![세션별 에이전트 아이콘, 프로젝트, 작업 제목, 상태를 보여 주는 HUD 패널](docs/images/hud-panel.png) | ![세션 수만큼 상태 점만 가로로 나열한 최소화 HUD](docs/images/hud-minimized.png) |
+
+헤더의 `–` 버튼을 누르면 세션마다 상태 점 하나만 남는 작은 바로 줄어듭니다. 점에 마우스를 올리면 프로젝트와 상태가 보이고, 바를 드래그해 옮기거나 더블클릭해 원래 크기로 되돌릴 수 있습니다.
+
 ## 현재 MVP
 
 - 실제 Claude `~/.claude/sessions/*.json` 메타데이터(PID, sessionId, cwd, status)를 읽고 프로세스 생존 여부와 결합
@@ -13,6 +19,7 @@
 - 프로젝트/Git worktree 식별, 안정적인 provider session ID, 종료 세션의 짧은 표시
 - borderless/topmost/taskbar-hidden HUD, 위치 저장, 헤더·빈 영역 더블클릭 확장
 - 세션 항목 더블클릭 시 해당 프로젝트(Git 루트, 없으면 cwd)를 VS Code로 열고 확장 URI(`anthropic.claude-code/open?session=`, `openai.chatgpt/local/`)로 대화 탭 열기 (사이드바 대화는 전환 불가, [조사 기록](docs/vscode-session-open.md))
+- 헤더 `–` 버튼으로 상태 점만 가로로 표시하는 최소화 모드 (오른쪽 끝 고정, 더블클릭 복원)
 - `PinWindow`으로 HUD 창을 모든 Windows 가상 데스크톱에 표시
 
 ## 요구 사항
