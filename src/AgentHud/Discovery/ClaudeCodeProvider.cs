@@ -33,12 +33,16 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 if (data?.SessionId is null || data.Pid <= 0) continue;
                 var alive = processes.Contains(data.Pid);
                 var activity = ParseDate(data.UpdatedAt) ?? File.GetLastWriteTimeUtc(file);
+                var state = !alive ? AgentState.Stopped : MapState(data.Status, activity);
+                // VS Code can keep an unused conversation process ready before any messages exist.
+                if (data.Entrypoint == "claude-vscode" && state == AgentState.Idle
+                    && Guid.TryParse(data.SessionId, out _) && !HasTranscript(data.SessionId)) continue;
                 result.Add(new AgentSession
                 {
                     Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
                     ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = await ReadTitleAsync(data.SessionId, token) ?? data.Name,
                     StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
-                    State = !alive ? AgentState.Stopped : MapState(data.Status, activity), IsActive = alive
+                    State = state, IsActive = alive
                 });
             }
             catch (JsonException) { }
@@ -46,6 +50,13 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             catch (UnauthorizedAccessException) { }
         }
         return result;
+    }
+
+    private bool HasTranscript(string sessionId)
+    {
+        if (!Directory.Exists(_projectsRoot)) return false;
+        return Directory.EnumerateDirectories(_projectsRoot)
+            .Any(project => File.Exists(Path.Combine(project, sessionId + ".jsonl")));
     }
 
     private async Task<string?> ReadTitleAsync(string sessionId, CancellationToken token)
@@ -111,5 +122,5 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             DateTime.TryParse(value.GetString(), null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
             ? parsed.ToUniversalTime() : null;
     }
-    private sealed record ClaudeMetadata(int Pid, string? SessionId, string? Cwd, JsonElement StartedAt, JsonElement UpdatedAt, string? Status, string? Name);
+    private sealed record ClaudeMetadata(int Pid, string? SessionId, string? Cwd, JsonElement StartedAt, JsonElement UpdatedAt, string? Status, string? Name, string? Entrypoint);
 }

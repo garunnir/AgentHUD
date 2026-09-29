@@ -101,11 +101,19 @@ try
     found = await provider.DiscoverAsync(CancellationToken.None);
     Assert(found.Single().State == AgentState.Working, "Claude busy status maps to Working");
     var titleId = Guid.NewGuid().ToString();
+    var emptyVsCodeId = Guid.NewGuid().ToString();
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = emptyVsCodeId, entrypoint = "claude-vscode", status = "idle" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Count == 0, "unused VS Code idle process is hidden");
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = emptyVsCodeId, entrypoint = "claude-vscode", status = "busy" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+        "VS Code working session is visible even before transcript is created");
     var projectLogs = Path.Combine(testHome, ".claude", "projects", "test-project");
     Directory.CreateDirectory(projectLogs);
     var transcript = Path.Combine(projectLogs, titleId + ".jsonl");
     await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
-        pid = Environment.ProcessId, sessionId = titleId, name = "derived-88", status = "idle" }));
+        pid = Environment.ProcessId, sessionId = titleId, name = "derived-88", status = "idle", entrypoint = "claude-vscode" }));
     await File.WriteAllTextAsync(transcript, System.Text.Json.JsonSerializer.Serialize(new {
         type = "ai-title", aiTitle = "실제 대화 제목", sessionId = titleId }) + "\n");
     found = await provider.DiscoverAsync(CancellationToken.None);
@@ -121,6 +129,11 @@ try
 
     var codexRoot = Path.Combine(testHome, ".codex", "sessions");
     Directory.CreateDirectory(codexRoot);
+    await File.WriteAllTextAsync(Path.Combine(codexRoot, "guardian.jsonl"),
+        System.Text.Json.JsonSerializer.Serialize(new { type = "session_meta", payload = new {
+            id = "guardian", session_id = "parent", parent_thread_id = "parent",
+            source = new { subagent = new { other = "guardian" } }
+        } }) + "\n");
     await File.WriteAllTextAsync(Path.Combine(codexRoot, "parent.jsonl"),
         "{\"type\":\"session_meta\",\"payload\":{\"session_id\":\"parent\",\"id\":\"parent\"}}\n");
     await File.WriteAllTextAsync(Path.Combine(codexRoot, "child.jsonl"),
@@ -134,6 +147,7 @@ try
     await discovery.RefreshAsync(CancellationToken.None);
     Assert(combined.GetAllAgents().Count == 4, "parent, child, legacy and Claude reach HUD registry together");
     Assert(combined.FindSession("codex:child")?.ParentSessionId == "codex:parent", "child thread identity and parent link");
+    Assert(combined.FindSession("codex:guardian") is null, "internal guardian is excluded while task subagents remain visible");
     await discovery.RefreshAsync(CancellationToken.None);
     Assert(notifications == 2, "HUD notifications continue after repeated refresh");
     var livePath = Path.Combine(codexRoot, "live.jsonl");

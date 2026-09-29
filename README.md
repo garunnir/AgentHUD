@@ -15,6 +15,7 @@
 - 실제 Claude `~/.claude/sessions/*.json` 메타데이터(PID, sessionId, cwd, status)를 읽고 프로세스 생존 여부와 결합
 - 실제 Codex `~/.codex/sessions/**/rollout-*.jsonl`의 `session_meta`(session_id, cwd)를 읽고 파일 활동 시각과 결합
 - provider → discovery service → thread-safe registry → HUD 분리
+- Codex 내부 guardian 세션과 대화 기록이 없는 Claude VS Code의 Idle 대기 세션은 목록에서 제외 (실제 대화·작업 서브에이전트는 유지)
 - `FileSystemWatcher` 이벤트 + 3초 저비용 보정 polling
 - 프로젝트/Git worktree 식별, 안정적인 provider session ID, 종료 세션의 짧은 표시
 - borderless/topmost/taskbar-hidden HUD, 위치 저장, 헤더·빈 영역 더블클릭 확장

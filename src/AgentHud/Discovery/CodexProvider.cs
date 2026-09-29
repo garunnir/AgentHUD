@@ -39,6 +39,10 @@ public sealed class CodexProvider : IAgentProvider
                     using var json = JsonDocument.Parse(first);
                     var root = json.RootElement;
                     if (GetString(root, "type") != "session_meta" || !root.TryGetProperty("payload", out var payload)) continue;
+                    // Internal approval guardian is not a user conversation or a task agent.
+                    if (payload.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.Object
+                        && source.TryGetProperty("subagent", out var subagent)
+                        && GetString(subagent, "other") == "guardian") continue;
                     // Child threads can share session_id, but have their own id.
                     var id = GetString(payload, "id") ?? GetString(payload, "session_id");
                     if (id is null) continue;
