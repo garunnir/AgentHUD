@@ -48,7 +48,9 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                     Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
                     ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
                     StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
-                    State = state, IsActive = alive, RateLimitResetAt = transcript.RateLimitResetAt
+                    State = state, IsActive = alive, RateLimitResetAt = transcript.RateLimitResetAt,
+                    Tokens5h = transcript.Usage?.Where(x => DateTime.UtcNow - x.At <= ShortWindow).Sum(x => x.Tokens) ?? 0,
+                    TokensWeek = transcript.Usage?.Sum(x => x.Tokens) ?? 0
                 });
             }
             catch (JsonException) { }
@@ -65,7 +67,28 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             .Any(project => File.Exists(Path.Combine(project, sessionId + ".jsonl")));
     }
 
-    private sealed record TranscriptInfo(string? Title = null, bool HasPendingQuestion = false, DateTime? RateLimitResetAt = null);
+    private sealed record TranscriptInfo(string? Title = null, bool HasPendingQuestion = false, DateTime? RateLimitResetAt = null, IReadOnlyList<(DateTime At, long Tokens)>? Usage = null);
+    private static readonly TimeSpan UsageWindow = TimeSpan.FromDays(7);
+    private static readonly TimeSpan ShortWindow = TimeSpan.FromHours(5);
+    // 같은 message.id가 여러 줄에 기록되므로 마지막 값만 사용. 7일보다 오래된 항목은 버림
+    private static void AddUsage(Dictionary<string, (DateTime At, long Tokens)> usage, string line)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(line);
+            var root = json.RootElement;
+            if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
+                || !message.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object
+                || GetString(message, "id") is not { } id
+                || GetString(root, "timestamp") is not { } stamp
+                || !DateTime.TryParse(stamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var at)) return;
+            at = at.ToUniversalTime();
+            if (DateTime.UtcNow - at > UsageWindow) return;
+            long Get(string name) => u.TryGetProperty(name, out var v) && v.TryGetInt64(out var n) ? n : 0;
+            usage[id] = (at, Get("input_tokens") + Get("output_tokens") + Get("cache_creation_input_tokens"));
+        }
+        catch (JsonException) { }
+    }
     private async Task<TranscriptInfo> ReadTranscriptAsync(string sessionId, CancellationToken token)
     {
         // Session IDs are filenames, never paths supplied by metadata.
@@ -82,6 +105,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 string? aiTitle = null, customTitle = null;
                 DateTime? rateLimitReset = null;
                 var pendingQuestions = new HashSet<string>();
+                var usage = new Dictionary<string, (DateTime At, long Tokens)>();
                 await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
                 using var reader = new StreamReader(stream);
                 while (await reader.ReadLineAsync(token) is { } line)
@@ -94,6 +118,8 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                     }
                     if (line.Contains("\"type\":\"user\"", StringComparison.Ordinal) || line.Contains("\"type\":\"assistant\"", StringComparison.Ordinal))
                         rateLimitReset = null;
+                    if (line.Contains("\"usage\":{", StringComparison.Ordinal) && line.Contains("\"type\":\"assistant\"", StringComparison.Ordinal))
+                        AddUsage(usage, line);
                     // Only parse records relevant to titles or question lifecycle.
                     if (!line.Contains("\"aiTitle\"", StringComparison.Ordinal) && !line.Contains("\"customTitle\"", StringComparison.Ordinal)
                         && !line.Contains("\"tool_use\"", StringComparison.Ordinal) && !line.Contains("\"tool_result\"", StringComparison.Ordinal)) continue;
@@ -121,7 +147,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                     }
                     catch (JsonException) { }
                 }
-                var result = new TranscriptInfo(!string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle, pendingQuestions.Count > 0, rateLimitReset);
+                var result = new TranscriptInfo(!string.IsNullOrWhiteSpace(customTitle) ? customTitle : aiTitle, pendingQuestions.Count > 0, rateLimitReset, usage.Values.ToArray());
                 _transcripts[path] = (info.Length, info.LastWriteTimeUtc, result);
                 return result;
             }

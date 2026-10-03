@@ -142,11 +142,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         InitializeComponent(); DataContext = this;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _codex = new CodexProvider(home);
+        _claudeLink.ExtraSource = () => _claudeApi.Latest;
+        _claudeApi.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus))); UpdateUsage(_registry.GetAllAgents()); });
+        Closed += (_, _) => _claudeApi.Dispose();
         _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex], _registry);
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => _desktopFollower?.Dispose();
-        Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); };
+        Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); };
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
         SizeChanged += (_, _) => { if (_minimized) Left = _anchorRight - ActualWidth; };
@@ -171,9 +174,82 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             else if (Sessions[i] != next[i]) Sessions[i] = next[i];
         }
         while (Sessions.Count > next.Length) Sessions.RemoveAt(Sessions.Count - 1);
+        UpdateUsage(all);
         PropertyChanged?.Invoke(this, new(nameof(ActiveCount)));
         PropertyChanged?.Invoke(this, new(nameof(HiddenCount)));
     }
+    // 하단 사용량 막대. 감지된 LLM이 없으면 비어 있음
+    public ObservableCollection<UsageRow> UsageRows { get; } = [];
+    // Claude는 서버 한도를 로컬에서 알 수 없어, 사용자가 정한 토큰 예산(백만 단위, 0이면 막대 없이 합계만)을 기준으로 함
+    private readonly ClaudeLimitLink _claudeLink = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
+    // 켜면 Claude Code 상태줄 스크립트를 등록해 서버 기준 한도를 받아옴(~/.claude/settings.json 수정)
+    public bool ClaudeLimitLinked
+    {
+        get => _claudeLink.IsLinked;
+        set
+        {
+            if (_claudeLink.IsLinked == value) return;
+            try { if (value) _claudeLink.Link(); else _claudeLink.Unlink(); }
+            catch (Exception e) { MessageBox.Show(this, e.Message, "Claude 한도 연동 실패"); }
+            PropertyChanged?.Invoke(this, new(nameof(ClaudeLimitLinked)));
+            UpdateUsage(_registry.GetAllAgents());
+        }
+    }
+    // claude.ai 사용량 API 연동(sessionKey는 DPAPI로 암호화 저장). 5분마다 조회
+    private readonly ClaudeUsageApi _claudeApi = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
+    public string ClaudeOrgId { get => _claudeApi.OrgId ?? ""; set { _claudeApi.OrgId = value; PropertyChanged?.Invoke(this, new(nameof(ClaudeOrgId))); } }
+    public string ClaudeApiStatus => _claudeApi.Status;
+    public bool ClaudeApiHasKey => _claudeApi.HasKey;
+    public void SetClaudeSessionKey(string? key)
+    {
+        try { _claudeApi.SetKey(key); }
+        catch (Exception e) when (e is IOException or System.Security.Cryptography.CryptographicException or UnauthorizedAccessException) { MessageBox.Show(this, e.Message, "키 저장 실패"); }
+        PropertyChanged?.Invoke(this, new(nameof(ClaudeApiHasKey)));
+    }
+    private double _claudeBudget5h, _claudeBudgetWeek;
+    public double ClaudeBudget5h { get => _claudeBudget5h; set { value = Math.Max(0, value); if (_claudeBudget5h == value) return; _claudeBudget5h = value; PropertyChanged?.Invoke(this, new(nameof(ClaudeBudget5h))); UpdateUsage(_registry.GetAllAgents()); } }
+    public double ClaudeBudgetWeek { get => _claudeBudgetWeek; set { value = Math.Max(0, value); if (_claudeBudgetWeek == value) return; _claudeBudgetWeek = value; PropertyChanged?.Invoke(this, new(nameof(ClaudeBudgetWeek))); UpdateUsage(_registry.GetAllAgents()); } }
+    private void UpdateUsage(IReadOnlyCollection<AgentSession> all)
+    {
+        var now = DateTime.UtcNow;
+        var rows = new List<UsageRow>();
+        var claude = all.Where(x => x.AgentType == AgentType.ClaudeCode).ToArray();
+        if (claude.Length > 0)
+        {
+            // 상태줄 연동으로 받은 서버 한도가 있으면 그 값, 없으면 토큰 합계(와 예산)
+            var (fiveHour, sevenDay) = _claudeLink.ReadLimits();
+            rows.Add(fiveHour is { } five ? CodexRow(AgentType.ClaudeCode, "5h", five, now) : ClaudeRow("5h", claude.Sum(x => x.Tokens5h), _claudeBudget5h));
+            rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, "주간", seven, now) : ClaudeRow("주간", claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
+        }
+        // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
+        if (all.Any(x => x.AgentType == AgentType.Codex))
+        {
+            var codex = all.Where(x => x.AgentType == AgentType.Codex && x.PrimaryLimit is not null).MaxBy(x => x.LastActivityAt);
+            if (codex is null) rows.Add(new(AgentType.Codex, "", null, "한도 정보 없음"));
+            else
+            {
+                rows.Add(CodexRow(AgentType.Codex, "5h", codex.PrimaryLimit!, now));
+                if (codex.SecondaryLimit is { } week) rows.Add(CodexRow(AgentType.Codex, "주간", week, now));
+            }
+        }
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i >= UsageRows.Count) UsageRows.Add(rows[i]);
+            else if (UsageRows[i] != rows[i]) UsageRows[i] = rows[i];
+        }
+        while (UsageRows.Count > rows.Count) UsageRows.RemoveAt(UsageRows.Count - 1);
+    }
+    private static UsageRow ClaudeRow(string label, long tokens, double budgetM) =>
+        budgetM <= 0 ? new(AgentType.ClaudeCode, label, null, $"{FormatTokens(tokens)} 토큰")
+        : new(AgentType.ClaudeCode, label, Math.Min(100, tokens / (budgetM * 1_000_000) * 100), $"{FormatTokens(tokens)}/{budgetM:0.#}M");
+    private static UsageRow CodexRow(AgentType agent, string label, LimitWindow window, DateTime now)
+    {
+        var used = window.PercentAt(now);
+        var left = window.ResetsAt - now;
+        var reset = left <= TimeSpan.Zero || left > TimeSpan.FromDays(8) ? "" : left.TotalHours >= 24 ? $"{left.TotalDays:0.#}일" : $"{(int)left.TotalHours}시간 {left.Minutes}분";
+        return new(agent, label, used, reset);
+    }
+    private static string FormatTokens(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.0}M" : n >= 1_000 ? $"{n / 1_000.0:0.0}K" : n.ToString();
     private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleExpanded(); else DragMove(); }
     private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -291,12 +367,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null);
 }
 
+
+// 하단 사용량 한 줄. UsedPercent가 null이면 막대 없이 텍스트만
+public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPercent, string Text)
+{
+    public string AgentName => AgentType == AgentType.ClaudeCode ? "Claude" : "Codex";
+    // 게이지는 남은 비율을 채움
+    public double Value => 100 - (UsedPercent ?? 0);
+    public string BarText => $"{Value:0}%";
+    public System.Windows.Visibility BarVisibility => UsedPercent is null ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+    public System.Windows.Media.Brush Fill => UsedPercent switch
+    {
+        >= 90 => System.Windows.Media.Brushes.IndianRed,
+        >= 70 => System.Windows.Media.Brushes.Goldenrod,
+        _ => System.Windows.Media.Brushes.SteelBlue
+    };
+}

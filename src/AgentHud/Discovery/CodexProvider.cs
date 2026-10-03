@@ -85,7 +85,12 @@ public sealed class CodexProvider : IAgentProvider
                                 session = session with { LastActivityAt = time };
                                 if (!item.TryGetProperty("payload", out var body)) continue;
                                 var kind = (GetString(item, "type"), GetString(body, "type"));
-                                if (kind is ("event_msg", "token_count")) limitWindowReset = ExhaustedWindowReset(body) ?? limitWindowReset;
+                                if (kind is ("event_msg", "token_count"))
+                                {
+                                    limitWindowReset = ExhaustedWindowReset(body) ?? limitWindowReset;
+                                    if (ParseWindow(body, "primary") is { } primary)
+                                        session = session with { PrimaryLimit = primary, SecondaryLimit = ParseWindow(body, "secondary") ?? session.SecondaryLimit };
+                                }
                                 if (kind is ("event_msg", "task_started" or "user_message")) rateLimitReset = null;
                                 if (kind.Item1 == "event_msg" && UsageLimitMessage(body) is { } limitMessage)
                                     rateLimitReset = RateLimitParser.ParseReset(limitMessage, time)
@@ -177,6 +182,14 @@ public sealed class CodexProvider : IAgentProvider
             if (latest is null || time > latest) latest = time;
         }
         return latest;
+    }
+    private static LimitWindow? ParseWindow(JsonElement body, string name)
+    {
+        if (!body.TryGetProperty("rate_limits", out var limits) || limits.ValueKind != JsonValueKind.Object
+            || !limits.TryGetProperty(name, out var window) || window.ValueKind != JsonValueKind.Object
+            || !window.TryGetProperty("used_percent", out var used) || used.ValueKind != JsonValueKind.Number
+            || !window.TryGetProperty("resets_at", out var resets) || !resets.TryGetInt64(out var seconds)) return null;
+        return new LimitWindow(used.GetDouble(), DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime);
     }
     private async Task RefreshTitlesAsync(CancellationToken token)
     {
