@@ -104,6 +104,8 @@ HUD 실행 중 작업/추론/승인 대기에서 Idle 또는 Completed로 바뀌
 
 창을 최소화하지 않았을 때 맨 아래에 감지된 LLM(아이콘으로 구분)별 5시간(`5h`)·주간 **남은 사용량**을 게이지 막대로 보여 줍니다. 막대 안에는 남은 비율이, 오른쪽에는 리셋까지 남은 시간이 나옵니다. 막대 색은 사용량 70% 이상이면 노란색, 90% 이상이면 빨간색입니다.
 
+![Claude와 Codex의 5시간·주간 게이지가 함께 표시된 HUD 전체 화면](docs/images/hud-usage-full.png)
+
 - **Codex**: 설정 없이 자동입니다. 세션 기록의 `token_count.rate_limits`에 서버가 알려 준 실제 한도가 있습니다.
 - **Claude**: 서버 기준 한도는 로컬 파일에 없어서 아래 방법 중 하나가 필요합니다. 더 최근에 갱신된 값을 씁니다.
   1. **claude.ai 사용량 API (설정 → Claude 사용량 API)**: Organization ID와 `sessionKey` 쿠키를 넣으면 5분마다 조회합니다. VS Code 확장만 써도 됩니다. claude.ai는 Cloudflare 뒤에 있어 일반 HTTP 클라이언트는 막히므로, 화면에 띄우지 않는 WebView2(Chromium)로 요청합니다(Windows 11 기본 설치). `sessionKey`는 Windows DPAPI로 암호화해 `%LOCALAPPDATA%\AgentHud`에 저장하고, 조회하는 동안만 쿠키로 넣습니다. 비공식 API라 언제든 바뀌거나 막힐 수 있고, 쿠키가 만료되면 다시 넣어야 합니다.
