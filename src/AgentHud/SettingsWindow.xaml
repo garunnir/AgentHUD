@@ -1,4 +1,4 @@
-<Window x:Class="AgentHud.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="300" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False">
+<Window x:Class="AgentHud.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:AgentHud" Width="300" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False">
   <Border CornerRadius="14" Background="#EE14171D" BorderBrush="#3AFFFFFF" BorderThickness="1" Padding="14">
     <StackPanel>
       <DockPanel MouseLeftButtonDown="Header_OnMouseLeftButtonDown" Background="Transparent">
@@ -12,6 +12,18 @@
         <TextBlock Text="Codex 활성 유지 시간" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
       </DockPanel>
       <TextBlock Margin="0,4,0,0" Text="Codex는 프로세스를 확인할 수 없어, 마지막 이벤트 후 이 시간 동안만 활성으로 봅니다. 질문 대기 중 사라진다면 늘리세요. (1–1440)" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+      <CheckBox Margin="0,14,0,0" IsChecked="{Binding CompleteSoundEnabled, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="완료 시 사운드 재생"/>
+      <DockPanel Margin="0,4,0,0" IsEnabled="{Binding CompleteSoundEnabled}">
+        <Button DockPanel.Dock="Right" Content="▶" Tag="Complete" Click="TestSound_OnClick" Margin="4,0,0,0" Padding="8,0" ToolTip="미리 듣기"/>
+        <Button DockPanel.Dock="Right" Content="파일…" Tag="Complete" Click="BrowseSound_OnClick" Margin="4,0,0,0" Padding="6,0" ToolTip="{Binding CompleteSoundFile}"/>
+        <ComboBox ItemsSource="{x:Static local:SoundSetting.Options}" SelectedValuePath="Key" DisplayMemberPath="Name" SelectedValue="{Binding CompleteSound, Mode=TwoWay}" FontSize="12"/>
+      </DockPanel>
+      <CheckBox Margin="0,10,0,0" IsChecked="{Binding AskSoundEnabled, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="질문(입력·승인 대기) 시 사운드 재생"/>
+      <DockPanel Margin="0,4,0,0" IsEnabled="{Binding AskSoundEnabled}">
+        <Button DockPanel.Dock="Right" Content="▶" Tag="Ask" Click="TestSound_OnClick" Margin="4,0,0,0" Padding="8,0" ToolTip="미리 듣기"/>
+        <Button DockPanel.Dock="Right" Content="파일…" Tag="Ask" Click="BrowseSound_OnClick" Margin="4,0,0,0" Padding="6,0" ToolTip="{Binding AskSoundFile}"/>
+        <ComboBox ItemsSource="{x:Static local:SoundSetting.Options}" SelectedValuePath="Key" DisplayMemberPath="Name" SelectedValue="{Binding AskSound, Mode=TwoWay}" FontSize="12"/>
+      </DockPanel>
       <CheckBox Margin="0,12,0,0" IsChecked="{Binding NotifyLimitReset, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="사용량 한도가 풀리면 알림"/>
       <CheckBox Margin="20,6,0,0" IsChecked="{Binding NotifyVisibleOnly, Mode=TwoWay}" IsEnabled="{Binding NotifyLimitReset}" Foreground="#DCE3ED" FontSize="12" Content="HUD에 표시 중인 세션만"/>
       <CheckBox Margin="0,8,0,0" IsChecked="{Binding AutoResume, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="사용량 한도 리셋 후 자동으로 이어서 진행"/>

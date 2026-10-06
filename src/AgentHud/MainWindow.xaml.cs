@@ -95,6 +95,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new(nameof(NotifyVisibleOnly)));
         }
     }
+    // 완료·질문 사운드. 키는 SoundSetting.Options, 파일 경로는 키가 File일 때만 사용
+    private string _completeSound = "Asterisk", _askSound = "Exclamation", _completeSoundFile = "", _askSoundFile = "";
+    public string CompleteSound { get => _completeSound; set => SetField(ref _completeSound, value, nameof(CompleteSound)); }
+    public string CompleteSoundFile { get => _completeSoundFile; set => SetField(ref _completeSoundFile, value ?? "", nameof(CompleteSoundFile)); }
+    public string AskSound { get => _askSound; set => SetField(ref _askSound, value, nameof(AskSound)); }
+    public string AskSoundFile { get => _askSoundFile; set => SetField(ref _askSoundFile, value ?? "", nameof(AskSoundFile)); }
+    private bool _completeSoundEnabled = true, _askSoundEnabled = true;
+    public bool CompleteSoundEnabled { get => _completeSoundEnabled; set => SetField(ref _completeSoundEnabled, value, nameof(CompleteSoundEnabled)); }
+    public bool AskSoundEnabled { get => _askSoundEnabled; set => SetField(ref _askSoundEnabled, value, nameof(AskSoundEnabled)); }
+    private void SetField<T>(ref T field, T value, string name)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new(name));
+    }
+    // 세션별 직전 표시 상태. 상태가 바뀌는 순간에만 소리를 낸다
+    private readonly Dictionary<string, AgentState> _lastStates = [];
+    private bool _soundsPrimed;
+    private void PlayStateSounds(IReadOnlyCollection<AgentSession> all)
+    {
+        bool complete = false, ask = false;
+        var seen = new HashSet<string>();
+        foreach (var s in all)
+        {
+            seen.Add(s.Id);
+            var state = s.DisplayState;
+            var known = _lastStates.TryGetValue(s.Id, out var prev);
+            _lastStates[s.Id] = state;
+            // 첫 스캔이나 오래된 세션이 뒤늦게 발견된 경우는 알리지 않음
+            if (!_soundsPrimed || (known && prev == state) || s.ParentSessionId is not null
+                || DateTime.UtcNow - s.LastActivityAt.ToUniversalTime() > TimeSpan.FromSeconds(60)) continue;
+            if (state == AgentState.Completed) complete = true;
+            else if (state is AgentState.WaitingForInput or AgentState.WaitingForApproval) ask = true;
+        }
+        foreach (var id in _lastStates.Keys.Where(id => !seen.Contains(id)).ToArray()) _lastStates.Remove(id);
+        _soundsPrimed = true;
+        if (ask && AskSoundEnabled) SoundSetting.Play(AskSound, AskSoundFile);
+        else if (complete && CompleteSoundEnabled) SoundSetting.Play(CompleteSound, CompleteSoundFile);
+    }
     private readonly List<NotificationWindow> _notifications = [];
     private void ShowLimitReset(AgentSession session)
     {
@@ -159,6 +198,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var all = _registry.GetAllAgents();
         _resumer.Check(all);
+        PlayStateSounds(all);
         // 숨긴 세션은 초기화 전까지 숨기되, 새로 대기·완료 상태가 되면 다시 표시
         foreach (var (id, seen) in _dismissed.ToArray())
         {
@@ -251,7 +291,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private static string FormatTokens(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.0}M" : n >= 1_000 ? $"{n / 1_000.0:0.0}K" : n.ToString();
     private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
-    private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleExpanded(); else DragMove(); }
+    private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleMinimized(); else DragMove(); }
     private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (ItemsControl.ContainerFromElement((ListBox)sender, (DependencyObject)e.OriginalSource) is ListBoxItem { DataContext: AgentSession session })
@@ -367,13 +407,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true);
 }
 
 

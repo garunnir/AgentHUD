@@ -82,13 +82,16 @@
     <Grid>
     <Grid x:Name="FullView">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <DockPanel MouseLeftButtonDown="Header_OnMouseLeftButtonDown">
+      <!-- 바깥 Border가 프레임 위·좌·우 가장자리까지 늘어나 상단바 전체를 드래그·더블클릭 영역으로 만듦 -->
+      <Border Background="Transparent" Margin="-14,-14,-14,0" Padding="14,14,14,0" MouseLeftButtonDown="Header_OnMouseLeftButtonDown">
+      <DockPanel>
         <TextBlock Text="AGENTS" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"/>
         <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="Close"/>
         <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="최소화"/>
         <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="메모장"/>
         <TextBlock Text="{Binding ActiveCount}" Foreground="White" FontWeight="Bold" Margin="8,0,0,0"/>
       </DockPanel>
+      </Border>
       <ListBox Grid.Row="1" ItemsSource="{Binding Sessions}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="List_OnMouseDoubleClick">
         <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0,4"/><Setter Property="Background" Value="Transparent"/></Style></ListBox.ItemContainerStyle>
         <ListBox.ItemTemplate>
