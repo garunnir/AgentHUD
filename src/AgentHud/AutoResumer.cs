@@ -22,8 +22,13 @@ public sealed class AutoResumer
     // (세션, 리셋 시각)마다 한 번만 시도. 다시 한도에 걸리면 리셋 시각이 바뀌어 새로 시도됨
     private readonly HashSet<(string Id, DateTime Reset)> _attempted = [];
     public bool Enabled { get; set; }
-    private string _prompt = DefaultPrompt;
-    public string Prompt { get => _prompt; set => _prompt = string.IsNullOrWhiteSpace(value) ? DefaultPrompt : value; }
+    /// <summary>사용자가 바꾼 메시지. null이면 현재 언어의 기본 메시지(어느 언어의 기본 문구를 넣어도 null로 취급)</summary>
+    public string? CustomPrompt { get; private set; }
+    public string Prompt
+    {
+        get => CustomPrompt ?? DefaultPrompt;
+        set => CustomPrompt = string.IsNullOrWhiteSpace(value) || Loc.Instance.IsTranslationOf("Resume.DefaultPrompt", value) ? null : value;
+    }
 
     public AutoResumer(string home, string logDirectory, TimeProvider? time = null, Func<AgentSession, ProcessStartInfo, string, bool>? start = null)
     {

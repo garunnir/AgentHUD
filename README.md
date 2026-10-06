@@ -31,7 +31,7 @@ The `?`/`!` symbols appear only when **Settings... → Show waiting states as sy
 - Optional sounds on completion and on questions (waiting for input or approval), with a built-in preview and support for custom sound files
 - Usage gauges: the bottom of the window shows each detected LLM's remaining 5-hour and weekly usage as bars, with time until reset ([Usage gauges](#usage-gauges))
 - Usage-limit detection: when Claude (a `rate_limit` API error in the conversation log) or Codex (`usage_limit_exceeded` in `task_complete`) stops on a usage limit, the session shows a pink dot (`RateLimited`) with a reset-time tooltip, and when the reset time arrives a notification pops up at the bottom right with a sound (click it to open the conversation; can be turned off in Settings). Turn on **Settings... → Resume automatically after a usage limit resets** to have the conversation resumed once via the CLI 1 minute after the reset ([Auto-resume](#auto-resume-after-usage-limits))
-- UI localization: strings live in `src/AgentHud/Strings.tsv` (English and Korean included). The HUD follows the system language and uses the fallback language set in Settings for anything missing — add a column to add a language
+- UI localization: strings live in `src/AgentHud/Strings.tsv` (English and Korean included). The HUD follows the system language by default, or pick one in **Settings... → Language**; missing strings fall back to English. Add a column to add a language
 
 ## Requirements
 

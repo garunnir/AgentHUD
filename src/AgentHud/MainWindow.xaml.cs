@@ -159,15 +159,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             bottom -= 8;
         }
     }
-    // 시스템 언어가 테이블에 없거나 문구가 빠졌을 때 쓰는 언어(기본 영어)
-    public string FallbackLanguage
+    // 표시 언어(빈 문자열이면 시스템 언어)
+    public string UiLanguage
     {
-        get => Loc.Instance.Fallback;
+        get => Loc.Instance.Language;
         set
         {
-            if (Loc.Instance.Fallback == value) return;
-            Loc.Instance.Fallback = value;
-            PropertyChanged?.Invoke(this, new(nameof(FallbackLanguage)));
+            if (Loc.Instance.Language == (value ?? Loc.Auto)) return;
+            Loc.Instance.Language = value ?? Loc.Auto;
+            PropertyChanged?.Invoke(this, new(nameof(UiLanguage)));
+            PropertyChanged?.Invoke(this, new(nameof(ResumePrompt)));
+            // 세션 항목의 문구(제목 없음, 한도 툴팁 등)는 항목을 다시 넣어야 갱신됨
+            Sessions.Clear();
+            UpdateSessions();
             PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
             UpdateUsage(_registry.GetAllAgents());
         }
@@ -426,13 +430,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { FallbackLanguage = p.FallbackLanguage ?? Loc.English; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { FallbackLanguage = FallbackLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? FallbackLanguage = null);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null);
 }
 
 

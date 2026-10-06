@@ -8,12 +8,14 @@ namespace AgentHud;
 public sealed record LanguageOption(string Code, string Name);
 
 /// <summary>
-/// Strings.tsv(키 + 언어 코드별 열) 로컬라이징 테이블. 시스템 UI 언어 → 대체 언어 → 영어 → 키 순으로 찾는다.
-/// 대체 언어가 바뀌면 인덱서 바인딩({local:Tr})이 갱신된다.
+/// Strings.tsv(키 + 언어 코드별 열) 로컬라이징 테이블. 선택한 언어(자동이면 시스템 UI 언어) → 영어 → 키 순으로 찾는다.
+/// 언어가 바뀌면 인덱서 바인딩({local:Tr})이 갱신된다.
 /// </summary>
 public sealed class Loc : INotifyPropertyChanged
 {
     public const string English = "en";
+    /// <summary>언어 목록에서 "시스템 언어 따르기"를 뜻하는 코드</summary>
+    public const string Auto = "";
     public static Loc Instance { get; } = new(CultureInfo.CurrentUICulture);
     public static string T(string key) => Instance[key];
     public static string F(string key, params object?[] args) => string.Format(CultureInfo.CurrentCulture, Instance[key], args);
@@ -21,7 +23,8 @@ public sealed class Loc : INotifyPropertyChanged
     private readonly Dictionary<string, Dictionary<string, string>> _table;
     private readonly string? _systemLanguage;
     private readonly CultureInfo _systemCulture;
-    private string _fallback = English;
+    private string _language = Auto;
+    private IReadOnlyList<LanguageOption>? _choices;
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public Loc(CultureInfo systemCulture, TextReader? table = null)
@@ -40,30 +43,35 @@ public sealed class Loc : INotifyPropertyChanged
     }
 
     public IReadOnlyList<LanguageOption> Languages { get; }
-    /// <summary>시스템 언어가 테이블에 없을 때, 또는 해당 언어에 빠진 문구가 있을 때 쓰는 언어</summary>
-    public string Fallback
+    /// <summary>설정 목록: 맨 앞이 "시스템 언어", 그 뒤로 테이블의 언어</summary>
+    public IReadOnlyList<LanguageOption> LanguageChoices => _choices ??= [new(Auto, F("Settings.LanguageAuto", _systemLanguage is null ? T("Settings.LanguageMissing") : LanguageName(_systemLanguage))), .. Languages];
+    /// <summary>사용자가 고른 언어 코드. Auto면 시스템 언어(테이블에 없으면 영어)</summary>
+    public string Language
     {
-        get => _fallback;
+        get => _language;
         set
         {
-            value = Languages.FirstOrDefault(x => x.Code.Equals(value, StringComparison.OrdinalIgnoreCase))?.Code ?? English;
-            if (_fallback == value) return;
-            _fallback = value;
-            PropertyChanged?.Invoke(this, new(nameof(Fallback)));
-            PropertyChanged?.Invoke(this, new(nameof(LanguageHint)));
+            value = Languages.FirstOrDefault(x => x.Code.Equals(value, StringComparison.OrdinalIgnoreCase))?.Code ?? Auto;
+            if (_language == value) return;
+            _language = value;
+            PropertyChanged?.Invoke(this, new(nameof(Language)));
             PropertyChanged?.Invoke(this, new(Binding.IndexerName));
         }
     }
-    public string LanguageHint => F("Settings.LanguageHint", _systemCulture.NativeName, _systemLanguage is null ? T("Settings.LanguageMissing") : _table["Language.Name"][_systemLanguage]);
+    private string Effective => _language.Length > 0 ? _language : _systemLanguage ?? English;
+    private string LanguageName(string code) => _table.GetValueOrDefault("Language.Name")?.GetValueOrDefault(code) ?? code;
 
     public string this[string key]
     {
         get
         {
             if (!_table.TryGetValue(key, out var row)) return key;
-            return (_systemLanguage is not null && row.TryGetValue(_systemLanguage, out var text)) || row.TryGetValue(_fallback, out text) || row.TryGetValue(English, out text) ? text : key;
+            return row.TryGetValue(Effective, out var text) || row.TryGetValue(English, out text) ? text : key;
         }
     }
+
+    /// <summary>text가 key의 어느 언어 번역과 같은지(저장된 기본 문구를 언어와 무관하게 알아보기 위함)</summary>
+    public bool IsTranslationOf(string key, string text) => _table.TryGetValue(key, out var row) && row.Values.Any(x => x == text.Trim());
 
     // 첫 줄(# 주석·빈 줄 제외)이 헤더: key<TAB>en<TAB>ko...  빈 칸은 번역 없음. \n \t \\ 이스케이프 지원
     private static (IReadOnlyList<LanguageOption>, Dictionary<string, Dictionary<string, string>>) Parse(TextReader reader)

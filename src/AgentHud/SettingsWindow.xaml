@@ -6,10 +6,9 @@
         <TextBlock Text="{local:Tr Settings.Title}" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"/>
       </DockPanel>
       <DockPanel Margin="0,12,0,0">
-        <ComboBox DockPanel.Dock="Right" Width="110" ItemsSource="{Binding Languages, Source={x:Static local:Loc.Instance}}" SelectedValuePath="Code" DisplayMemberPath="Name" SelectedValue="{Binding FallbackLanguage, Mode=TwoWay}" FontSize="12"/>
+        <ComboBox DockPanel.Dock="Right" Width="110" ItemsSource="{Binding LanguageChoices, Source={x:Static local:Loc.Instance}}" SelectedValuePath="Code" DisplayMemberPath="Name" SelectedValue="{Binding UiLanguage, Mode=TwoWay}" FontSize="12"/>
         <TextBlock Text="{local:Tr Settings.Language}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
       </DockPanel>
-      <TextBlock Margin="0,4,0,0" Text="{Binding LanguageHint, Source={x:Static local:Loc.Instance}}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
       <CheckBox Margin="0,12,0,0" IsChecked="{Binding ShowWaitingSymbols, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.WaitingSymbols}"/>
       <DockPanel Margin="0,12,0,0">
         <TextBlock DockPanel.Dock="Right" Text="{local:Tr Settings.Minutes}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0"/>

@@ -370,13 +370,20 @@ Assert(korean["A"] == "안녕", "system language (ko-KR → ko) is used");
 Assert(korean["B"] == "Only English" && korean["Missing"] == "Missing", "missing strings fall back to English, then the key");
 Assert(korean["C"] == "Line\nBreak", "table cells unescape \\n");
 var french = new AgentHud.Loc(new System.Globalization.CultureInfo("fr-FR"), new StringReader(locTable));
-Assert(french["A"] == "Hello", "untranslated system language uses the default English fallback");
-french.Fallback = "ko";
-Assert(french["A"] == "안녕" && french["B"] == "Only English", "configured fallback is used, then English");
-french.Fallback = "xx";
-Assert(french.Fallback == "en", "unknown fallback resets to English");
+Assert(french["A"] == "Hello", "untranslated system language uses English");
+french.Language = "ko";
+Assert(french["A"] == "안녕" && french["B"] == "Only English", "chosen language is used, then English");
+korean.Language = "en";
+Assert(korean["A"] == "Hello", "chosen language overrides the system language");
+korean.Language = "xx";
+Assert(korean.Language == AgentHud.Loc.Auto && korean["A"] == "안녕", "unknown language resets to the system language");
 Assert(french.Languages.Select(x => x.Name).SequenceEqual(["English", "한국어", "日本語"]), "languages come from table header");
 Assert(AgentHud.Loc.Instance["Settings.Title"] != "Settings.Title" && AgentHud.Loc.Instance["Language.Name"] != "Language.Name", "embedded Strings.tsv loads");
+var promptResumer = new AgentHud.AutoResumer(Path.GetTempPath(), Path.GetTempPath());
+promptResumer.Prompt = "사용량 한도로 중단됐던 작업을 이어서 진행해 주세요.";
+Assert(promptResumer.CustomPrompt is null && promptResumer.Prompt == AgentHud.AutoResumer.DefaultPrompt, "a saved default prompt in any language follows the current language");
+promptResumer.Prompt = "keep going";
+Assert(promptResumer.CustomPrompt == "keep going", "a custom resume prompt is kept");
 Console.WriteLine("All registry and discovery checks passed.");
 
 if (args.Contains("--discover"))

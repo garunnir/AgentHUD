@@ -1,5 +1,5 @@
 # AgentHud 로컬라이징 테이블 (탭 구분). 열 추가 = 언어 추가 (헤더에 ko, ja, zh-TW 같은 문화권 코드).
-# 빈 칸은 번역 없음 → 대체 언어(설정) → en 순으로 사용. 줄바꿈은 \n. {0} 등은 string.Format 자리표시자.
+# 빈 칸은 번역 없음 → en으로 표시. 줄바꿈은 \n. {0} 등은 string.Format 자리표시자.
 key	en	ko
 Language.Name	English	한국어
 Common.Close	Close	닫기
@@ -47,9 +47,9 @@ Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못�
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
 Settings.Title	Settings	설정
-Settings.Language	Fallback language	대체 언어
-Settings.LanguageHint	System language: {0} → {1}. Languages and strings missing from the table use the fallback language.	시스템 언어: {0} → {1}. 테이블에 없는 언어나 빠진 문구는 대체 언어로 표시합니다.
-Settings.LanguageMissing	not translated, using fallback	번역 없음, 대체 언어 사용
+Settings.Language	Language	언어
+Settings.LanguageAuto	System ({0})	시스템 ({0})
+Settings.LanguageMissing	not translated, English	번역 없음, 영어
 Settings.WaitingSymbols	Show waiting states as symbols (? / !)	대기 상태를 기호로 표시 (? / !)
 Settings.CodexActive	Codex active window	Codex 활성 유지 시간
 Settings.Minutes	min	분
