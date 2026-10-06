@@ -8,6 +8,7 @@
     <RootNamespace>AgentHud</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Strings.tsv" LogicalName="AgentHud.Strings.tsv" />
     <None Include="native\VirtualDesktopAccessor.dll" CopyToOutputDirectory="PreserveNewest" Link="VirtualDesktopAccessor.dll" />
   </ItemGroup>
   <ItemGroup>

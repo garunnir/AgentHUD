@@ -137,9 +137,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly List<NotificationWindow> _notifications = [];
     private void ShowLimitReset(AgentSession session)
     {
-        var body = $"{session.DisplayTitle}\n{session.RateLimitResetAt!.Value.ToLocalTime():HH:mm}에 한도가 풀렸습니다. "
-            + (AutoResume ? "잠시 뒤 자동으로 이어서 진행합니다." : "클릭하면 대화를 엽니다.");
-        var w = new NotificationWindow($"{session.DisplayName} 한도 해제 · {session.ProjectName}", body, () => { _registry.AcknowledgeCompletion(session.Id); OpenInVsCode(session); });
+        var body = Loc.F("Notify.LimitResetBody", session.DisplayTitle, session.RateLimitResetAt!.Value.ToLocalTime())
+            + " " + Loc.T(AutoResume ? "Notify.AutoResumeSoon" : "Notify.ClickToOpen");
+        var w = new NotificationWindow(Loc.F("Notify.LimitResetTitle", session.DisplayName, session.ProjectName), body, () => { _registry.AcknowledgeCompletion(session.Id); OpenInVsCode(session); });
         w.Loaded += (_, _) => LayoutNotifications();
         w.Closed += (_, _) => { _notifications.Remove(w); LayoutNotifications(); };
         _notifications.Add(w);
@@ -157,6 +157,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             bottom -= w.ActualHeight;
             w.Top = bottom;
             bottom -= 8;
+        }
+    }
+    // 시스템 언어가 테이블에 없거나 문구가 빠졌을 때 쓰는 언어(기본 영어)
+    public string FallbackLanguage
+    {
+        get => Loc.Instance.Fallback;
+        set
+        {
+            if (Loc.Instance.Fallback == value) return;
+            Loc.Instance.Fallback = value;
+            PropertyChanged?.Invoke(this, new(nameof(FallbackLanguage)));
+            PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
+            UpdateUsage(_registry.GetAllAgents());
         }
     }
     private SettingsWindow? _settingsWindow;
@@ -230,7 +243,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (_claudeLink.IsLinked == value) return;
             try { if (value) _claudeLink.Link(); else _claudeLink.Unlink(); }
-            catch (Exception e) { MessageBox.Show(this, e.Message, "Claude 한도 연동 실패"); }
+            catch (Exception e) { MessageBox.Show(this, e.Message, Loc.T("Error.ClaudeLinkFailed")); }
             PropertyChanged?.Invoke(this, new(nameof(ClaudeLimitLinked)));
             UpdateUsage(_registry.GetAllAgents());
         }
@@ -243,7 +256,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public void SetClaudeSessionKey(string? key)
     {
         try { _claudeApi.SetKey(key); }
-        catch (Exception e) when (e is IOException or System.Security.Cryptography.CryptographicException or UnauthorizedAccessException) { MessageBox.Show(this, e.Message, "키 저장 실패"); }
+        catch (Exception e) when (e is IOException or System.Security.Cryptography.CryptographicException or UnauthorizedAccessException) { MessageBox.Show(this, e.Message, Loc.T("Error.KeySaveFailed")); }
         PropertyChanged?.Invoke(this, new(nameof(ClaudeApiHasKey)));
     }
     private double _claudeBudget5h, _claudeBudgetWeek;
@@ -259,19 +272,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             // 상태줄 연동으로 받은 서버 한도가 있으면 그 값, 없으면 토큰 합계(와 예산)
             var (fiveHour, sevenDay) = _claudeLink.ReadLimits();
             rows.Add(fiveHour is { } five ? CodexRow(AgentType.ClaudeCode, "5h", five, now) : ClaudeRow("5h", claude.Sum(x => x.Tokens5h), _claudeBudget5h));
-            rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, "주간", seven, now) : ClaudeRow("주간", claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
+            rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, UsageRow.Week, seven, now) : ClaudeRow(UsageRow.Week, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
         }
         // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
         if (all.Any(x => x.AgentType == AgentType.Codex))
         {
             var codex = all.Where(x => x.AgentType == AgentType.Codex && x.PrimaryLimit is not null).MaxBy(x => x.LastActivityAt);
-            if (codex is null) rows.Add(new(AgentType.Codex, "", null, "한도 정보 없음"));
+            if (codex is null) rows.Add(new(AgentType.Codex, "", null, Loc.T("Usage.NoLimitInfo")));
             else
             {
                 rows.Add(CodexRow(AgentType.Codex, "5h", codex.PrimaryLimit!, now));
-                if (codex.SecondaryLimit is { } week) rows.Add(CodexRow(AgentType.Codex, "주간", week, now));
+                if (codex.SecondaryLimit is { } week) rows.Add(CodexRow(AgentType.Codex, UsageRow.Week, week, now));
             }
         }
+        // 주간 사용량이 이미 권장량을 넘었으면 5h 권장 눈금은 숨김(주간 눈금은 유지)
+        for (var i = 0; i < rows.Count; i++)
+            if (rows[i] is { Label: "5h" } five && rows.Any(w => w.AgentType == five.AgentType && w.Label == UsageRow.Week && w.PacePercent is { } p && w.Value < p))
+                rows[i] = five with { PacePercent = null };
         for (var i = 0; i < rows.Count; i++)
         {
             if (i >= UsageRows.Count) UsageRows.Add(rows[i]);
@@ -280,17 +297,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         while (UsageRows.Count > rows.Count) UsageRows.RemoveAt(UsageRows.Count - 1);
     }
     private static UsageRow ClaudeRow(string label, long tokens, double budgetM) =>
-        budgetM <= 0 ? new(AgentType.ClaudeCode, label, null, $"{FormatTokens(tokens)} 토큰")
+        budgetM <= 0 ? new(AgentType.ClaudeCode, label, null, Loc.F("Usage.Tokens", FormatTokens(tokens)))
         : new(AgentType.ClaudeCode, label, Math.Min(100, tokens / (budgetM * 1_000_000) * 100), $"{FormatTokens(tokens)}/{budgetM:0.#}M");
     private static UsageRow CodexRow(AgentType agent, string label, LimitWindow window, DateTime now)
     {
         var used = window.PercentAt(now);
         var left = window.ResetsAt - now;
-        var reset = left <= TimeSpan.Zero || left > TimeSpan.FromDays(8) ? "" : left.TotalHours >= 24 ? $"{left.TotalDays:0.#}일" : $"{(int)left.TotalHours}시간 {left.Minutes}분";
+        var reset = left <= TimeSpan.Zero || left > TimeSpan.FromDays(8) ? "" : left.TotalHours >= 24 ? Loc.F("Usage.ResetDays", left.TotalDays) : Loc.F("Usage.ResetHoursMinutes", (int)left.TotalHours, left.Minutes);
         // 균등하게 쓴다고 가정한 권장 잔량 = 창에서 남은 시간의 비율
         var length = label == "5h" ? TimeSpan.FromHours(5) : TimeSpan.FromDays(7);
-        double? pace = left <= TimeSpan.Zero || left > length ? null : left / length * 100;
-        return new(agent, label, used, reset, pace);
+        double? pace = left <= TimeSpan.Zero || left > length ? null : left / length * 100;        return new(agent, label, used, reset, pace);
     }
     private static string FormatTokens(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.0}M" : n >= 1_000 ? $"{n / 1_000.0:0.0}K" : n.ToString();
     private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
@@ -363,7 +379,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Width = _restoreSize.Width; Height = _restoreSize.Height;
         }
     }
-    private void Memo_OnClick(object sender, RoutedEventArgs e) => ShowMemo("", "메모장", Memos.Global, Memos.SetGlobal);
+    private void Memo_OnClick(object sender, RoutedEventArgs e) => ShowMemo("", Loc.T("Main.Memo"), Memos.Global, Memos.SetGlobal);
     private void ProjectMemo_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: AgentSession session }) ShowProjectMemo(session);
@@ -377,7 +393,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void ShowProjectMemo(AgentSession session)
     {
         if (session.ProjectPath is not { } path || string.IsNullOrWhiteSpace(path)) return;
-        ShowMemo("project:" + path.ToUpperInvariant(), "메모 · " + session.ProjectName, Memos.GetProject(path) ?? "", text => Memos.SetProject(path, text));
+        ShowMemo("project:" + path.ToUpperInvariant(), Loc.F("Memo.ProjectHeader", session.ProjectName), Memos.GetProject(path) ?? "", text => Memos.SetProject(path, text));
     }
     // 같은 대상의 메모 창이 이미 열려 있으면 앞으로 가져오고, 없으면 HUD 왼쪽에 새로 연다
     private void ShowMemo(string key, string header, string text, Action<string> save)
@@ -410,13 +426,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { FallbackLanguage = p.FallbackLanguage ?? Loc.English; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { FallbackLanguage = FallbackLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = ResumePrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? FallbackLanguage = null);
 }
 
 
@@ -427,7 +443,9 @@ public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPer
     public System.Windows.GridLength PaceLeft => new(PacePercent ?? 0, System.Windows.GridUnitType.Star);
     public System.Windows.GridLength PaceRight => new(100 - (PacePercent ?? 0), System.Windows.GridUnitType.Star);
     public System.Windows.Visibility PaceVisibility => PacePercent is null ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
-    public string? BarToolTip => PacePercent is { } p ? $"권장 잔량 {p:0}% (균등 소비 기준)" : null;
+    public const string Week = "week";
+    public string DisplayLabel => Label == Week ? Loc.T("Usage.Week") : Label;
+    public string? BarToolTip => PacePercent is { } p ? Loc.F("Usage.PaceTip", p) : null;
     public string AgentName => AgentType == AgentType.ClaudeCode ? "Claude" : "Codex";
     // 게이지는 남은 비율을 채움
     public double Value => 100 - (UsedPercent ?? 0);

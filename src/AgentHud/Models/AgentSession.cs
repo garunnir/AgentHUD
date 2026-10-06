@@ -19,7 +19,7 @@ public sealed record AgentSession
     public string? WorktreePath { get; init; }
     public string? TerminalTitle { get; init; }
     public string? SessionTitle { get; init; }
-    public string DisplayTitle => string.IsNullOrWhiteSpace(SessionTitle) ? "제목 없음" : SessionTitle;
+    public string DisplayTitle => string.IsNullOrWhiteSpace(SessionTitle) ? Loc.T("Session.Untitled") : SessionTitle;
     public string? CurrentTask { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime LastActivityAt { get; init; }
@@ -34,7 +34,7 @@ public sealed record AgentSession
     public LimitWindow? PrimaryLimit { get; init; }
     public LimitWindow? SecondaryLimit { get; init; }
     public string StatusTip => RateLimitResetAt is { } reset && DisplayState == AgentState.RateLimited
-        ? $"RateLimited · 리셋 {reset.ToLocalTime():M/d HH:mm}" : DisplayState.ToString();
+        ? Loc.F("Session.RateLimitedReset", reset.ToLocalTime()) : DisplayState.ToString();
     public string DisplayName => AgentType == AgentType.ClaudeCode ? "Claude" : "Codex";
-    public string ProjectName => string.IsNullOrWhiteSpace(ProjectPath) ? "Unknown project" : Path.GetFileName(ProjectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    public string ProjectName => string.IsNullOrWhiteSpace(ProjectPath) ? Loc.T("Session.UnknownProject") : Path.GetFileName(ProjectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 }

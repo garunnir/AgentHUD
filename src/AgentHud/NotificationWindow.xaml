@@ -1,8 +1,8 @@
-<Window x:Class="AgentHud.NotificationWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="280" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False" ShowActivated="False">
-  <Border CornerRadius="14" Background="#EE14171D" BorderBrush="HotPink" BorderThickness="1" Padding="14,10" Cursor="Hand" MouseLeftButtonUp="Body_OnMouseLeftButtonUp" ToolTip="클릭하면 대화를 VS Code에서 엽니다">
+<Window x:Class="AgentHud.NotificationWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:AgentHud" Width="280" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False" ShowActivated="False">
+  <Border CornerRadius="14" Background="#EE14171D" BorderBrush="HotPink" BorderThickness="1" Padding="14,10" Cursor="Hand" MouseLeftButtonUp="Body_OnMouseLeftButtonUp" ToolTip="{local:Tr Notify.OpenHint}">
     <StackPanel>
       <DockPanel>
-        <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="닫기" Cursor="Arrow"/>
+        <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Common.Close}" Cursor="Arrow"/>
         <Ellipse Width="9" Height="9" Fill="HotPink" Margin="0,0,8,0" VerticalAlignment="Center"/>
         <TextBlock x:Name="HeaderText" Foreground="#DCE3ED" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
       </DockPanel>

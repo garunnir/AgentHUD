@@ -364,6 +364,19 @@ try
     Assert(resumer.CreateStartInfo(due with { Id = "codex:not-a-guid & calc" }) is null, "non-GUID session ids are never passed to a command line");
 }
 finally { Directory.Delete(limitHome, recursive: true); }
+var locTable = "# comment\nkey\ten\tko\tja\nLanguage.Name\tEnglish\t한국어\t日本語\nA\tHello\t안녕\t\nB\tOnly English\t\t\nC\tLine\\nBreak\t\t\n";
+var korean = new AgentHud.Loc(new System.Globalization.CultureInfo("ko-KR"), new StringReader(locTable));
+Assert(korean["A"] == "안녕", "system language (ko-KR → ko) is used");
+Assert(korean["B"] == "Only English" && korean["Missing"] == "Missing", "missing strings fall back to English, then the key");
+Assert(korean["C"] == "Line\nBreak", "table cells unescape \\n");
+var french = new AgentHud.Loc(new System.Globalization.CultureInfo("fr-FR"), new StringReader(locTable));
+Assert(french["A"] == "Hello", "untranslated system language uses the default English fallback");
+french.Fallback = "ko";
+Assert(french["A"] == "안녕" && french["B"] == "Only English", "configured fallback is used, then English");
+french.Fallback = "xx";
+Assert(french.Fallback == "en", "unknown fallback resets to English");
+Assert(french.Languages.Select(x => x.Name).SequenceEqual(["English", "한국어", "日本語"]), "languages come from table header");
+Assert(AgentHud.Loc.Instance["Settings.Title"] != "Settings.Title" && AgentHud.Loc.Instance["Language.Name"] != "Language.Name", "embedded Strings.tsv loads");
 Console.WriteLine("All registry and discovery checks passed.");
 
 if (args.Contains("--discover"))

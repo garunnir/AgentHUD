@@ -11,7 +11,7 @@ namespace AgentHud;
 // 프롬프트는 셸 인용 문제를 피하려고 stdin으로 전달한다.
 public sealed class AutoResumer
 {
-    public const string DefaultPrompt = "사용량 한도로 중단됐던 작업을 이어서 진행해 주세요.";
+    public static string DefaultPrompt => Loc.T("Resume.DefaultPrompt");
     // 한도 리셋 직후엔 아직 거절될 수 있어 조금 기다림
     public static readonly TimeSpan StartDelay = TimeSpan.FromMinutes(1);
     private readonly TimeProvider _time;

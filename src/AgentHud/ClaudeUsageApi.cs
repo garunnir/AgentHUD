@@ -17,7 +17,10 @@ public sealed class ClaudeUsageApi : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _orgId;
     private (LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At) _latest;
-    public string Status { get; private set; } = "미설정";
+    // 언어가 바뀌어도 다시 그릴 수 있게 테이블 키와 인자로 보관
+    private (string Key, object?[] Args) _status = ("Api.NotConfigured", []);
+    public string Status => Loc.F(_status.Key, _status.Args);
+    private void SetStatus(string key, params object?[] args) => _status = (key, args);
     public event Action? Updated;
 
     public ClaudeUsageApi(string dataDirectory)
@@ -37,7 +40,7 @@ public sealed class ClaudeUsageApi : IDisposable
     public void SetKey(string? key)
     {
         key = Clean(key);
-        if (string.IsNullOrEmpty(key)) { try { File.Delete(_keyPath); } catch (IOException) { } _latest = default; Status = "미설정"; Updated?.Invoke(); return; }
+        if (string.IsNullOrEmpty(key)) { try { File.Delete(_keyPath); } catch (IOException) { } _latest = default; SetStatus("Api.NotConfigured"); Updated?.Invoke(); return; }
         Directory.CreateDirectory(Path.GetDirectoryName(_keyPath)!);
         File.WriteAllBytes(_keyPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser));
         _ = RefreshAsync();
@@ -65,33 +68,34 @@ public sealed class ClaudeUsageApi : IDisposable
         if (!await _gate.WaitAsync(0)) return;
         try
         {
-            if (!HasKey || _orgId is null) { Status = HasKey ? "Organization ID 필요" : "미설정"; return; }
-            if (!Guid.TryParse(_orgId, out var org)) { Status = "Organization ID 형식 오류"; return; }
+            if (!HasKey || _orgId is null) { SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); return; }
+            if (!Guid.TryParse(_orgId, out var org)) { SetStatus("Api.OrgIdInvalid"); return; }
             string key;
             try { key = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(_keyPath), null, DataProtectionScope.CurrentUser)); }
-            catch (Exception e) when (e is CryptographicException or IOException) { Status = "저장된 키를 읽을 수 없음. 다시 입력하세요"; return; }
+            catch (Exception e) when (e is CryptographicException or IOException) { SetStatus("Api.KeyUnreadable"); return; }
             // Cloudflare 때문에 일반 HTTP 클라이언트로는 막혀서, 화면 밖 WebView2(Chromium)로 조회한다(UI 스레드 필요)
             var url = $"https://claude.ai/api/organizations/{org}/usage";
             var (code, body) = await Application.Current.Dispatcher.InvokeAsync(() => _web.GetAsync(url, key, _stop.Token)).Task.Unwrap();
             if (code != 200)
             {
                 var (blocked, reason) = ErrorReason(body);
-                Status = blocked ? "Cloudflare가 요청을 막음 (브라우저 방식으로도 통과하지 못함)"
-                    : code is 401 or 403 ? $"인증 실패 (HTTP {code}{reason}): sessionKey 또는 Organization ID를 확인하세요"
-                    : code < 0 ? "연결 실패 (네트워크 또는 WebView2 오류)" : $"요청 실패 (HTTP {code}{reason})";
+                if (blocked) SetStatus("Api.Blocked");
+                else if (code is 401 or 403) SetStatus("Api.AuthFailed", code, reason);
+                else if (code < 0) SetStatus("Api.ConnectFailed");
+                else SetStatus("Api.RequestFailed", code, reason);
                 return;
             }
-            if (WebViewFetcher.LooksLikeChallenge(body)) { Status = "Cloudflare가 요청을 막음 (브라우저 방식으로도 통과하지 못함)"; return; }
+            if (WebViewFetcher.LooksLikeChallenge(body)) { SetStatus("Api.Blocked"); return; }
             using var json = JsonDocument.Parse(body);
             var five = Window(json.RootElement, "five_hour");
             var seven = Window(json.RootElement, "seven_day");
-            if (five is null && seven is null) { Status = "응답에서 한도를 찾지 못함"; return; }
+            if (five is null && seven is null) { SetStatus("Api.NoLimits"); return; }
             _latest = (five, seven, DateTime.UtcNow);
-            Status = $"연결됨 · {DateTime.Now:HH:mm} 갱신";
+            SetStatus("Api.Connected", DateTime.Now);
         }
         catch (Exception e) when (e is TimeoutException or TaskCanceledException or JsonException or InvalidOperationException or System.Runtime.InteropServices.COMException or Microsoft.Web.WebView2.Core.WebView2RuntimeNotFoundException)
         {
-            if (!_stop.IsCancellationRequested) Status = "연결 실패: " + e.GetType().Name;
+            if (!_stop.IsCancellationRequested) SetStatus("Api.ConnectError", e.GetType().Name);
         }
         finally { _gate.Release(); Updated?.Invoke(); }
     }

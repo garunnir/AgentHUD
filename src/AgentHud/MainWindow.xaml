@@ -68,7 +68,7 @@
   <Border x:Name="Frame" CornerRadius="14" Background="#EE14171D" BorderBrush="#3AFFFFFF" BorderThickness="1" Padding="14">
     <Border.ContextMenu>
       <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-        <MenuItem Header="{Binding HiddenCount}" HeaderStringFormat="숨긴 세션 다시 표시 ({0})" Click="ResetHidden_OnClick">
+        <MenuItem Header="{Binding HiddenCount}" HeaderStringFormat="{local:Tr Main.ShowHidden}" Click="ResetHidden_OnClick">
           <MenuItem.Style>
             <Style TargetType="MenuItem">
               <Style.Triggers><DataTrigger Binding="{Binding HiddenCount}" Value="0"><Setter Property="IsEnabled" Value="False"/></DataTrigger></Style.Triggers>
@@ -76,7 +76,7 @@
           </MenuItem.Style>
         </MenuItem>
         <Separator/>
-        <MenuItem Header="설정..." Click="Settings_OnClick"/>
+        <MenuItem Header="{local:Tr Main.Settings}" Click="Settings_OnClick"/>
       </ContextMenu>
     </Border.ContextMenu>
     <Grid>
@@ -86,9 +86,9 @@
       <Border Background="Transparent" Margin="-14,-14,-14,0" Padding="14,14,14,0" MouseLeftButtonDown="Header_OnMouseLeftButtonDown">
       <DockPanel>
         <TextBlock Text="AGENTS" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"/>
-        <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="Close"/>
-        <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="최소화"/>
-        <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="메모장"/>
+        <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Common.Close}"/>
+        <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Minimize}"/>
+        <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Memo}"/>
         <TextBlock Text="{Binding ActiveCount}" Foreground="White" FontWeight="Bold" Margin="8,0,0,0"/>
       </DockPanel>
       </Border>
@@ -99,7 +99,7 @@
             <Grid Background="Transparent">
               <Grid.ContextMenu>
                 <ContextMenu>
-                  <MenuItem Header="프로젝트 메모..." Click="ProjectMemo_OnClick"/>
+                  <MenuItem Header="{local:Tr Main.ProjectMemo}" Click="ProjectMemo_OnClick"/>
                 </ContextMenu>
               </Grid.ContextMenu>
               <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -129,7 +129,7 @@
               </DockPanel>
               <Grid Grid.Column="4" Margin="8,0,0,0">
                 <TextBlock x:Name="StateText" Text="{Binding DisplayState}" ToolTip="{Binding StatusTip}" Foreground="#AEB8C6" FontSize="11" VerticalAlignment="Center"/>
-                <Button x:Name="DismissButton" Content="×" Click="Dismiss_OnClick" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" ToolTip="HUD에서 숨기기" Focusable="False">
+                <Button x:Name="DismissButton" Content="×" Click="Dismiss_OnClick" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" ToolTip="{local:Tr Main.Dismiss}" Focusable="False">
                   <Button.Template>
                     <ControlTemplate TargetType="Button">
                       <Border x:Name="Bg" Background="Transparent" CornerRadius="4" Padding="6,0"><TextBlock x:Name="Glyph" Text="{TemplateBinding Content}" Foreground="#91A0B5" FontSize="14"/></Border>
@@ -156,7 +156,7 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="56"/><ColumnDefinition Width="*" MinWidth="60"/><ColumnDefinition Width="64"/></Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Viewbox Width="14" Height="14" Margin="0,0,5,0" ToolTip="{Binding AgentName}"><Path Stretch="Uniform" Style="{StaticResource AgentIconStyle}"/></Viewbox>
-                <TextBlock Text="{Binding Label}" Foreground="#91A0B5" FontSize="11" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding DisplayLabel}" Foreground="#91A0B5" FontSize="11" VerticalAlignment="Center"/>
               </StackPanel>
               <Grid Grid.Column="1" Visibility="{Binding BarVisibility}" Margin="0,0,8,0" ToolTip="{Binding BarToolTip}">
                 <ProgressBar Minimum="0" Maximum="100" Value="{Binding Value, Mode=OneWay}" Foreground="{Binding Fill}" Height="16" BorderThickness="0" Background="#2AFFFFFF">
