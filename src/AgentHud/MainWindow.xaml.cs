@@ -287,7 +287,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var used = window.PercentAt(now);
         var left = window.ResetsAt - now;
         var reset = left <= TimeSpan.Zero || left > TimeSpan.FromDays(8) ? "" : left.TotalHours >= 24 ? $"{left.TotalDays:0.#}일" : $"{(int)left.TotalHours}시간 {left.Minutes}분";
-        return new(agent, label, used, reset);
+        // 균등하게 쓴다고 가정한 권장 잔량 = 창에서 남은 시간의 비율
+        var length = label == "5h" ? TimeSpan.FromHours(5) : TimeSpan.FromDays(7);
+        double? pace = left <= TimeSpan.Zero || left > length ? null : left / length * 100;
+        return new(agent, label, used, reset, pace);
     }
     private static string FormatTokens(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.0}M" : n >= 1_000 ? $"{n / 1_000.0:0.0}K" : n.ToString();
     private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
@@ -418,8 +421,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 
 // 하단 사용량 한 줄. UsedPercent가 null이면 막대 없이 텍스트만
-public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPercent, string Text)
+public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPercent, string Text, double? PacePercent = null)
 {
+    // 권장 잔량 눈금 위치(막대를 PaceLeft:PaceRight로 분할). 값이 없으면 눈금을 숨김
+    public System.Windows.GridLength PaceLeft => new(PacePercent ?? 0, System.Windows.GridUnitType.Star);
+    public System.Windows.GridLength PaceRight => new(100 - (PacePercent ?? 0), System.Windows.GridUnitType.Star);
+    public System.Windows.Visibility PaceVisibility => PacePercent is null ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+    public string? BarToolTip => PacePercent is { } p ? $"권장 잔량 {p:0}% (균등 소비 기준)" : null;
     public string AgentName => AgentType == AgentType.ClaudeCode ? "Claude" : "Codex";
     // 게이지는 남은 비율을 채움
     public double Value => 100 - (UsedPercent ?? 0);

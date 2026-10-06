@@ -158,7 +158,7 @@
                 <Viewbox Width="14" Height="14" Margin="0,0,5,0" ToolTip="{Binding AgentName}"><Path Stretch="Uniform" Style="{StaticResource AgentIconStyle}"/></Viewbox>
                 <TextBlock Text="{Binding Label}" Foreground="#91A0B5" FontSize="11" VerticalAlignment="Center"/>
               </StackPanel>
-              <Grid Grid.Column="1" Visibility="{Binding BarVisibility}" Margin="0,0,8,0">
+              <Grid Grid.Column="1" Visibility="{Binding BarVisibility}" Margin="0,0,8,0" ToolTip="{Binding BarToolTip}">
                 <ProgressBar Minimum="0" Maximum="100" Value="{Binding Value, Mode=OneWay}" Foreground="{Binding Fill}" Height="16" BorderThickness="0" Background="#2AFFFFFF">
                   <ProgressBar.Template>
                     <ControlTemplate TargetType="ProgressBar">
@@ -168,6 +168,11 @@
                     </ControlTemplate>
                   </ProgressBar.Template>
                 </ProgressBar>
+                <!-- 권장 잔량 눈금: 막대 끝이 눈금보다 오른쪽이면 페이스보다 여유 있음 -->
+                <Grid Visibility="{Binding PaceVisibility}" IsHitTestVisible="False">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding PaceLeft}"/><ColumnDefinition Width="{Binding PaceRight}"/></Grid.ColumnDefinitions>
+                  <Rectangle Width="2" HorizontalAlignment="Right" Fill="White" Opacity="0.9" Margin="0,-1"/>
+                </Grid>
                 <TextBlock Text="{Binding BarText}" Foreground="White" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
               </Grid>
               <TextBlock Grid.Column="2" Text="{Binding Text}" Foreground="#AEB8C6" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
