@@ -35,7 +35,7 @@ jobs:
           Compress-Archive publish/fd/* "AgentHud-${{ github.ref_name }}-win-x64.zip"
           Compress-Archive publish/sc/* "AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           body: |
