@@ -24,6 +24,10 @@ public sealed record AgentSession
     public DateTime StartedAt { get; init; }
     public DateTime LastActivityAt { get; init; }
     public bool IsActive { get; init; }
+    // Claude ScheduleWakeup으로 예약된 재개 시각(UTC). 이 시각 전의 idle은 완료가 아니라 예약 대기
+    public DateTime? WakeupAt { get; init; }
+    // 백그라운드 Bash/Agent가 아직 끝나지 않음. 끝나면 알림으로 에이전트가 재개되므로 idle은 완료가 아니다
+    public bool HasBackgroundTasks { get; init; }
     public string? ParentSessionId { get; init; }
     // 사용량 한도로 끊긴 마지막 턴의 리셋 시각(UTC). 이후 새 턴이 시작되면 null
     public DateTime? RateLimitResetAt { get; init; }

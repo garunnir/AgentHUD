@@ -77,6 +77,15 @@ Assert(expiring.FindSession(a.Id)!.HasUnreadCompletion, "missing completion reta
 clock.Now = clock.Now.AddMinutes(5);
 expiring.Replace([]);
 Assert(expiring.FindSession(a.Id) is null, "missing completion removed after timeout");
+var wakeClock = new TestTimeProvider();
+var wakeRegistry = new AgentSessionRegistry(wakeClock);
+wakeRegistry.Replace([a]);
+wakeRegistry.Replace([a with { State = AgentState.Idle, WakeupAt = wakeClock.Now.UtcDateTime.AddMinutes(2) }]);
+Assert(!wakeRegistry.FindSession(a.Id)!.HasUnreadCompletion, "idle before a scheduled wakeup is not a completion");
+wakeRegistry.Replace([a]);
+wakeClock.Now = wakeClock.Now.AddMinutes(3);
+wakeRegistry.Replace([a with { State = AgentState.Idle, WakeupAt = wakeClock.Now.UtcDateTime.AddMinutes(-1) }]);
+Assert(wakeRegistry.FindSession(a.Id)!.HasUnreadCompletion, "idle after the wakeup time passed is a completion again");
 Directory.CreateDirectory(sessionsRoot);
 try
 {
@@ -157,6 +166,67 @@ try
         pid = 2147483647, sessionId = titleId, status = "busy" }));
     Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Stopped,
         "pending Claude question does not override dead process");
+    var midTurnId = Guid.NewGuid().ToString();
+    var midTurnTranscript = Path.Combine(projectLogs, midTurnId + ".jsonl");
+    string Line(string type, string stopReason, object block, bool sidechain = false) => System.Text.Json.JsonSerializer.Serialize(new {
+        type, sessionId = midTurnId, isSidechain = sidechain, message = new { stop_reason = stopReason, content = new[] { block } } }) + "\n";
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = midTurnId, status = "idle" }));
+    await File.WriteAllTextAsync(midTurnTranscript, Line("assistant", "tool_use", new { type = "tool_use", name = "Task", id = "t1" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+        "idle status with an open turn (tool_use) stays Working");
+    await File.AppendAllTextAsync(midTurnTranscript, Line("user", "", new { type = "tool_result", tool_use_id = "t1", content = "x" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+        "idle status after tool_result stays Working until the turn ends");
+    await File.AppendAllTextAsync(midTurnTranscript, Line("assistant", "end_turn", new { type = "text", text = "done" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Idle,
+        "end_turn closes the turn so idle is a real completion");
+    await File.AppendAllTextAsync(midTurnTranscript, Line("assistant", "tool_use", new { type = "tool_use", name = "Read", id = "s1" }, sidechain: true));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Idle,
+        "sidechain records do not reopen the turn");
+    var wakeId = Guid.NewGuid().ToString();
+    var wakeTranscript = Path.Combine(projectLogs, wakeId + ".jsonl");
+    string Stamped(string type, string stopReason, object block, DateTime at) => System.Text.Json.JsonSerializer.Serialize(new {
+        type, sessionId = wakeId, timestamp = at.ToString("O"), message = new { stop_reason = stopReason, content = new[] { block } } }) + "\n";
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = wakeId, status = "idle" }));
+    await File.WriteAllTextAsync(wakeTranscript,
+        Stamped("assistant", "tool_use", new { type = "tool_use", name = "ScheduleWakeup", id = "w1", input = new { delaySeconds = 120 } }, DateTime.UtcNow)
+        + Stamped("assistant", "end_turn", new { type = "text", text = "waiting" }, DateTime.UtcNow));
+    var wakeFound = (await provider.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(wakeFound.WakeupAt > DateTime.UtcNow.AddMinutes(1), "ScheduleWakeup delay is read from the transcript");
+    Assert(wakeFound.State == AgentState.Working, "idle before a scheduled wakeup is shown as Working");
+    await File.AppendAllTextAsync(wakeTranscript, System.Text.Json.JsonSerializer.Serialize(new {
+        type = "user", sessionId = wakeId, message = new { content = "wake up" } }) + "\n");
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().WakeupAt is null, "wakeup prompt ends the scheduled wait");
+    var bgId = Guid.NewGuid().ToString();
+    var bgTranscript = Path.Combine(projectLogs, bgId + ".jsonl");
+    string BgLine(string type, object content, bool sidechain = false) => System.Text.Json.JsonSerializer.Serialize(new {
+        type, sessionId = bgId, isSidechain = sidechain, timestamp = DateTime.UtcNow.ToString("O"), message = new { content } }) + "\n";
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = bgId, status = "idle" }));
+    await File.WriteAllTextAsync(bgTranscript,
+        BgLine("user", new[] { new { type = "tool_result", tool_use_id = "plain", content = "Command running in background with ID: quoted1 (just quoted text)" } })
+        + BgLine("assistant", new object[] {
+            new { type = "tool_use", id = "b1", name = "Bash", input = new { command = "sleep 75", run_in_background = true } },
+            new { type = "tool_use", id = "b2", name = "Agent", input = new { prompt = "x" } } })
+        + BgLine("user", new[] { new { type = "tool_result", tool_use_id = "b1", content = "Command running in background with ID: bash1. Output is being written to: x" } })
+        + BgLine("user", new[] { new { type = "tool_result", tool_use_id = "b2", content = new[] { new { type = "text", text = "Async agent launched successfully.\nagentId: agent1 (internal)" } } } }));
+    var bgFound = (await provider.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(bgFound.HasBackgroundTasks && bgFound.State == AgentState.Working, "background Bash and Agent launches are tracked and shown as Working");
+    await File.AppendAllTextAsync(bgTranscript, BgLine("user", "<task-notification>\n<task-id>bash1</task-id>\n<status>completed</status>\n</task-notification>"));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "one finished task leaves the other pending");
+    await File.AppendAllTextAsync(bgTranscript, BgLine("user", "<task-notification>\n<task-id>agent1</task-id>\n<status>completed</status>\n</task-notification>"));
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "task-notification clears finished background tasks");
+    await File.AppendAllTextAsync(bgTranscript, BgLine("user", new[] { new { type = "tool_result", tool_use_id = "b3", content = "Command running in background with ID: bash2" } }, sidechain: true));
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "sidechain background tasks are ignored");
+    var bgRegistry = new AgentSessionRegistry(new TestTimeProvider());
+    bgRegistry.Replace([a]);
+    bgRegistry.Replace([a with { State = AgentState.Idle, HasBackgroundTasks = true }]);
+    Assert(!bgRegistry.FindSession(a.Id)!.HasUnreadCompletion, "idle with background tasks running is not a completion");
+    bgRegistry.Replace([a]);
+    bgRegistry.Replace([a with { State = AgentState.Idle }]);
+    Assert(bgRegistry.FindSession(a.Id)!.HasUnreadCompletion, "idle after the notification-driven turn finishes is a completion");
     var codexRoot = Path.Combine(testHome, ".codex", "sessions");
     Directory.CreateDirectory(codexRoot);
     await File.WriteAllTextAsync(Path.Combine(codexRoot, "guardian.jsonl"),
