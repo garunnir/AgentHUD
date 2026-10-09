@@ -22,29 +22,53 @@ public struct ContentView: View {
                 fullContent
             }
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(HudTheme.background)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(HudTheme.border, lineWidth: 1)
+        )
         .frame(width: 320)
-        .background(.ultraThinMaterial)
     }
 
     private var header: some View {
-        HStack {
-            Text("Agent HUD")
-                .font(.headline)
+        HStack(spacing: 6) {
+            Text("AGENTS")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(HudTheme.dim)
+            Text("\(visibleSessions.count)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
             Spacer()
             Button(action: { showSettings.toggle() }) {
                 Image(systemName: "gearshape")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.plain)
+            .foregroundStyle(HudTheme.dim)
+            .help(Localiz.current.string("Main.Settings"))
             .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                 SettingsPopover(viewModel: viewModel)
             }
             Button(action: { viewModel.toggleMinimized() }) {
-                Image(systemName: viewModel.isMinimized ? "plus.circle" : "minus.circle")
+                Image(systemName: viewModel.isMinimized ? "plus" : "minus")
+                    .font(.system(size: 12))
             }
             .buttonStyle(.plain)
+            .foregroundStyle(HudTheme.dim)
+            .help(Localiz.current.string("Main.Minimize"))
+            Button(action: { NSApplication.shared.terminate(nil) }) {
+                Text("×")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(HudTheme.dim)
+            .help(Localiz.current.string("Common.Close"))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.bottom, 8)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             viewModel.toggleMinimized()
@@ -52,40 +76,41 @@ public struct ContentView: View {
     }
 
     private var minimizedContent: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ForEach(visibleSessions) { session in
-                Circle()
-                    .fill(color(for: session.displayState))
-                    .frame(width: 10, height: 10)
-                    .help(session.displayTitle)
+                StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     private var fullContent: some View {
         VStack(spacing: 0) {
-            ForEach(visibleSessions) { session in
-                SessionRow(session: session, viewModel: viewModel)
-            }
             if visibleSessions.isEmpty {
                 Text("No active sessions")
-                    .foregroundStyle(.secondary)
-                    .padding()
+                    .font(.system(size: 12))
+                    .foregroundStyle(HudTheme.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(visibleSessions) { session in
+                    SessionRow(session: session, viewModel: viewModel)
+                }
             }
+            usageSection
         }
     }
 
-    private func color(for state: AgentState) -> Color {
-        switch state {
-        case .working, .thinking: return .blue
-        case .waitingForInput, .waitingForApproval: return .yellow
-        case .completed: return .green
-        case .error: return .red
-        case .stopped, .idle: return .gray
-        case .rateLimited: return .pink
-        case .unknown, .starting: return .purple
+    @ViewBuilder
+    private var usageSection: some View {
+        let rows = viewModel.buildUsageRows()
+        if !rows.isEmpty {
+            Divider()
+                .overlay(Color.white.opacity(0.1))
+                .padding(.vertical, 6)
+            VStack(spacing: 2) {
+                ForEach(rows) { row in
+                    UsageGaugeView(row: row)
+                }
+            }
         }
     }
 }
@@ -97,7 +122,7 @@ struct SettingsPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Settings")
+            Text(Localiz.current.string("Main.Settings"))
                 .font(.headline)
             Picker("Codex active window", selection: $viewModel.codexActiveWindowMinutes) {
                 ForEach(windowChoices, id: \.self) { minutes in
@@ -105,8 +130,13 @@ struct SettingsPopover: View {
                 }
             }
             .frame(width: 220)
+            Toggle(isOn: $viewModel.showWaitingSymbols) {
+                Text("Show waiting states as symbols (? / !)")
+                    .font(.system(size: 12))
+            }
+            .toggleStyle(.checkbox)
             if !viewModel.hiddenSessionIds.isEmpty {
-                Button("Show hidden sessions (\(viewModel.hiddenSessionIds.count))") {
+                Button(HudTheme.formatPattern(Localiz.current.string("Main.ShowHidden"), [viewModel.hiddenSessionIds.count])) {
                     viewModel.showHiddenSessions()
                 }
             }
@@ -116,53 +146,59 @@ struct SettingsPopover: View {
             }
         }
         .padding(12)
+        .frame(width: 260)
     }
 }
 
 struct SessionRow: View {
     let session: AgentSession
     @ObservedObject var viewModel: AgentHudViewModel
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(color(for: session.displayState))
-                .frame(width: 10, height: 10)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.system(size: 12, weight: .medium))
+        HStack(spacing: 6) {
+            StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+            AgentIconView(type: session.agentType)
+                .frame(width: 16, height: 16)
+                .help(session.agentType.displayName)
+            Text(session.projectName)
+                .font(.system(size: 12))
+                .foregroundStyle(HudTheme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 92, alignment: .leading)
+            Text(session.displayTitle)
+                .font(.system(size: 12))
+                .foregroundStyle(HudTheme.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if hovering {
+                Button(action: { viewModel.hideSession(session.id) }) {
+                    Text("×")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(HudTheme.dim)
+                .help(Localiz.current.string("Main.Dismiss"))
+            } else {
+                Text(session.displayStateName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(HudTheme.secondary)
                     .lineLimit(1)
-                Text(session.projectName)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .help(session.statusTip)
             }
-            Spacer()
-            Text(session.agentType.displayName)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 3)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onTapGesture(count: 2) {
+            viewModel.acknowledgeCompletion(session.id)
             viewModel.openProject(session)
         }
         .contextMenu {
-            Button("Hide") { viewModel.hideSession(session.id) }
+            Button(Localiz.current.string("Main.Dismiss")) { viewModel.hideSession(session.id) }
             Button("Open Project") { viewModel.openProject(session) }
-        }
-    }
-
-    private func color(for state: AgentState) -> Color {
-        switch state {
-        case .working, .thinking: return .blue
-        case .waitingForInput, .waitingForApproval: return .yellow
-        case .completed: return .green
-        case .error: return .red
-        case .stopped, .idle: return .gray
-        case .rateLimited: return .pink
-        case .unknown, .starting: return .purple
         }
     }
 }

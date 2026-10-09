@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.styleMask.remove(.resizable)
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = true

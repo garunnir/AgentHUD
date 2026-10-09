@@ -52,4 +52,31 @@ public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
         guard let path = projectPath, !path.isEmpty else { return "Unknown" }
         return URL(fileURLWithPath: path).lastPathComponent
     }
+
+    /// Enum-style state name shown at the right of each row, matching the Windows app.
+    public var displayStateName: String {
+        switch displayState {
+        case .unknown: return "Unknown"
+        case .starting: return "Starting"
+        case .working: return "Working"
+        case .thinking: return "Thinking"
+        case .waitingForInput: return "WaitingForInput"
+        case .waitingForApproval: return "WaitingForApproval"
+        case .completed: return "Completed"
+        case .error: return "Error"
+        case .stopped: return "Stopped"
+        case .idle: return "Idle"
+        case .rateLimited: return "RateLimited"
+        }
+    }
+
+    public var statusTip: String {
+        if let reset = rateLimitResetAt, displayState == .rateLimited {
+            return HudTheme.formatPattern(
+                Localiz.current.string("Session.RateLimitedReset"),
+                [reset.formatted(date: .omitted, time: .shortened)]
+            )
+        }
+        return displayStateName
+    }
 }
