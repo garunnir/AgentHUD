@@ -1,10 +1,16 @@
 import SwiftUI
+import AppKit
 
 public struct ContentView: View {
     @ObservedObject var viewModel: AgentHudViewModel
+    @State private var showSettings = false
 
     public init(viewModel: AgentHudViewModel) {
         self.viewModel = viewModel
+    }
+
+    private var visibleSessions: [AgentSession] {
+        viewModel.sessions.filter { !viewModel.hiddenSessionIds.contains($0.id) }
     }
 
     public var body: some View {
@@ -25,6 +31,13 @@ public struct ContentView: View {
             Text("Agent HUD")
                 .font(.headline)
             Spacer()
+            Button(action: { showSettings.toggle() }) {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showSettings, arrowEdge: .bottom) {
+                SettingsPopover(viewModel: viewModel)
+            }
             Button(action: { viewModel.toggleMinimized() }) {
                 Image(systemName: viewModel.isMinimized ? "plus.circle" : "minus.circle")
             }
@@ -36,7 +49,7 @@ public struct ContentView: View {
 
     private var minimizedContent: some View {
         HStack(spacing: 8) {
-            ForEach(viewModel.sessions.filter { !$0.isActive || $0.hasUnreadCompletion }) { session in
+            ForEach(visibleSessions) { session in
                 Circle()
                     .fill(color(for: session.displayState))
                     .frame(width: 10, height: 10)
@@ -49,10 +62,10 @@ public struct ContentView: View {
 
     private var fullContent: some View {
         VStack(spacing: 0) {
-            ForEach(viewModel.sessions) { session in
+            ForEach(visibleSessions) { session in
                 SessionRow(session: session, viewModel: viewModel)
             }
-            if viewModel.sessions.isEmpty {
+            if visibleSessions.isEmpty {
                 Text("No active sessions")
                     .foregroundStyle(.secondary)
                     .padding()
@@ -70,6 +83,35 @@ public struct ContentView: View {
         case .rateLimited: return .pink
         case .unknown, .starting: return .purple
         }
+    }
+}
+
+struct SettingsPopover: View {
+    @ObservedObject var viewModel: AgentHudViewModel
+
+    private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Settings")
+                .font(.headline)
+            Picker("Codex active window", selection: $viewModel.codexActiveWindowMinutes) {
+                ForEach(windowChoices, id: \.self) { minutes in
+                    Text(minutes >= 60 ? "\(minutes / 60)h" : "\(minutes)m").tag(minutes)
+                }
+            }
+            .frame(width: 220)
+            if !viewModel.hiddenSessionIds.isEmpty {
+                Button("Show hidden sessions (\(viewModel.hiddenSessionIds.count))") {
+                    viewModel.showHiddenSessions()
+                }
+            }
+            Divider()
+            Button("Quit Agent HUD") {
+                NSApplication.shared.terminate(nil)
+            }
+        }
+        .padding(12)
     }
 }
 

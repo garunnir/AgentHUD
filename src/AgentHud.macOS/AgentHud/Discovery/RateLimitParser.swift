@@ -74,7 +74,7 @@ public enum RateLimitParser {
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
             guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { continue }
-            let groups = (1...match.numberOfRanges).compactMap { Range(match.range(at: $0), in: text) }.map { String(text[$0]) }
+            let groups = (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: text) }.map { String(text[$0]) }
             guard groups.count >= 2 else { continue }
 
             var hour = Int(groups[0]) ?? 0

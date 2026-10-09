@@ -13,7 +13,7 @@ public final class CodexProvider: IAgentProvider {
     private var cache: [String: CachedSession] = [:]
     private var activeWindowTicks: Int64
 
-    public init(home: String, activeWindow: TimeInterval = 300) {
+    public init(home: String, activeWindow: TimeInterval = 3600) {
         sessionsRoot = (home as NSString).appendingPathComponent(".codex/sessions")
         indexPath = (home as NSString).appendingPathComponent(".codex/session_index.jsonl")
         activeWindowTicks = Int64(activeWindow * 1_000_000)
@@ -106,15 +106,16 @@ public final class CodexProvider: IAgentProvider {
             guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { continue }
             defer { try? stream.close() }
 
-            let data = try? stream.readToEnd()
-            guard let data = data else { continue }
-            let content = String(data: data, encoding: .utf8) ?? ""
-            let tail: String
-            if content.count > 262144 {
-                tail = String(content.suffix(262144))
-            } else {
-                tail = content
+            // Read only the tail (256 KB); when the offset is inside a line, drop the partial first line.
+            let streamLength = (try? stream.seekToEnd()) ?? 0
+            let offset = streamLength > 262144 ? streamLength - 262144 : 0
+            try? stream.seek(toOffset: offset)
+            guard let data = try? stream.readToEnd() else { continue }
+            var content = String(data: data, encoding: .utf8) ?? ""
+            if offset > 0, let newline = content.firstIndex(of: "\n") {
+                content = String(content[content.index(after: newline)...])
             }
+            let tail = content
 
             for line in tail.components(separatedBy: "\n").dropLast() {
                 guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
@@ -239,7 +240,8 @@ public final class CodexProvider: IAgentProvider {
     private func readFirstLine(_ path: String) throws -> String? {
         guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? stream.close() }
-        let chunk = try? stream.readToEnd()
+        // Read only a bounded prefix; the session_meta line is the first line.
+        let chunk = try? stream.read(upToCount: 262144)
         guard let chunk = chunk, let content = String(data: chunk, encoding: .utf8) else { return nil }
         return content.components(separatedBy: "\n").first
     }
@@ -269,7 +271,18 @@ public final class CodexProvider: IAgentProvider {
 
     private func parseDate(_ value: String?) -> Date? {
         guard let value = value else { return nil }
-        return ISO8601DateFormatter().date(from: value)
+        // Remove trailing "Z" and parse as UTC explicitly
+        let normalized = value.hasSuffix("Z") ? String(value.dropLast()) : value
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        if let date = formatter.date(from: normalized) { return date }
+        // Fallback: without fractional seconds
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let date = formatter.date(from: normalized) { return date }
+        print("CodexProvider: parseDate failed for '\(value)' normalized='\(normalized)'")
+        return nil
     }
 
     private func fileCreationDate(_ path: String) -> Date {

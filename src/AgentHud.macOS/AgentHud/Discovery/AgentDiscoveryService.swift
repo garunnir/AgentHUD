@@ -54,6 +54,7 @@ public final class AgentDiscoveryService {
             do {
                 let sessions = try await provider.discover()
                 allSessions.append(contentsOf: sessions)
+                print("Discovery: \(provider.agentType) -> \(sessions.count) sessions [\(sessions.map(\.id).joined(separator: ", "))]")
             } catch {
                 NSLog("\(provider.agentType) discovery failed: \(error)")
                 allSessions.append(contentsOf: registry.getByAgentType(provider.agentType))

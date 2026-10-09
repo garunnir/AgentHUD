@@ -7,18 +7,25 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var isMinimized = false
     @Published public var hiddenSessionIds: Set<String> = []
     @Published public var memos: [String: String] = [:]
+    // Codex active window (minutes). Sessions whose last event is within this window are considered active.
+    @Published public var codexActiveWindowMinutes: Int = 60 {
+        didSet { codexProvider.setActiveWindow(TimeInterval(codexActiveWindowMinutes * 60)) }
+    }
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
+    private let codexProvider: CodexProvider
     private var updateTask: Task<Void, Never>?
 
     public init() {
         let registry = AgentSessionRegistry()
         self.registry = registry
         let home = NSHomeDirectory()
+        let codex = CodexProvider(home: home, activeWindow: TimeInterval(60 * 60))
+        self.codexProvider = codex
         let providers: [IAgentProvider] = [
             ClaudeCodeProvider(home: home),
-            CodexProvider(home: home)
+            codex
         ]
         self.discovery = AgentDiscoveryService(providers: providers, registry: registry)
 
