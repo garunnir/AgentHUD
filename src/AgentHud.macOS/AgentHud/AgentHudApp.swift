@@ -1,15 +1,16 @@
 import SwiftUI
+import AppKit
 
 @main
 struct AgentHudApp: App {
     @StateObject private var viewModel = AgentHudViewModel()
 
     var body: some Scene {
-        MenuBarExtra {
+        WindowGroup {
             ContentView(viewModel: viewModel)
-        } label: {
-            Image(systemName: "dot.radiowaves.left.and.right")
+                .frame(width: 320, height: 400)
         }
-        .menuBarExtraStyle(.window)
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 320, height: 400)
     }
 }
