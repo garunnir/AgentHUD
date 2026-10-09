@@ -32,6 +32,7 @@ public struct ContentView: View {
                 .stroke(HudTheme.border, lineWidth: 1)
         )
         .frame(width: 320)
+        .background(WindowConfigurator())
     }
 
     private var header: some View {
