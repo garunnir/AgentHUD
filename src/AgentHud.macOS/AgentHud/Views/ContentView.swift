@@ -73,15 +73,21 @@ public struct ContentView: View {
     }
 
     private var minimizedContent: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: MiniBarOverlay.dotSpacing) {
             ForEach(visibleSessions) { session in
                 StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
-                    .help(session.projectName)
+                    .allowsHitTesting(false)
             }
         }
         .frame(minWidth: 6)
-        // Drag the bar to move it; double-click restores the full panel.
-        .background(WindowDragHandle { viewModel.toggleMinimized() })
+        // Native overlay: drag the bar to move it, double-click restores, and each
+        // dot shows a native tooltip with its project and status.
+        .overlay(
+            MiniBarOverlay(
+                tooltips: visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
+                onDoubleClick: { viewModel.toggleMinimized() }
+            )
+        )
     }
 
     private var fullContent: some View {

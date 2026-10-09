@@ -32,6 +32,7 @@ struct WindowConfigurator: NSViewRepresentable {
         var resizeObserver: NSObjectProtocol?
         var rightEdge: CGFloat?
         var topEdge: CGFloat?
+        var lastSize: NSSize?
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -60,6 +61,7 @@ struct WindowConfigurator: NSViewRepresentable {
             coordinator.didRestoreOrigin = false
             coordinator.rightEdge = window.frame.maxX
             coordinator.topEdge = window.frame.maxY
+            coordinator.lastSize = window.frame.size
         }
 
         window.level = .floating
@@ -95,8 +97,15 @@ struct WindowConfigurator: NSViewRepresentable {
                 queue: .main
             ) { [weak window, weak coordinator] _ in
                 guard let window, let coordinator else { return }
-                coordinator.rightEdge = window.frame.maxX
-                coordinator.topEdge = window.frame.maxY
+                // A move caused by a resize must not refresh the anchor edges,
+                // otherwise the resize anchor is immediately lost.
+                let size = window.frame.size
+                let sizeChanged = coordinator.lastSize != nil && coordinator.lastSize != size
+                coordinator.lastSize = size
+                if !sizeChanged {
+                    coordinator.rightEdge = window.frame.maxX
+                    coordinator.topEdge = window.frame.maxY
+                }
                 let origin = window.frame.origin
                 UserDefaults.standard.set([origin.x, origin.y], forKey: Self.originKey)
             }
@@ -108,6 +117,7 @@ struct WindowConfigurator: NSViewRepresentable {
                 queue: .main
             ) { [weak window, weak coordinator] _ in
                 guard let window, let coordinator else { return }
+                coordinator.lastSize = window.frame.size
                 guard let right = coordinator.rightEdge, let top = coordinator.topEdge else { return }
                 let target = NSPoint(x: right - window.frame.width, y: top - window.frame.height)
                 if abs(window.frame.origin.x - target.x) > 0.5 || abs(window.frame.origin.y - target.y) > 0.5 {
