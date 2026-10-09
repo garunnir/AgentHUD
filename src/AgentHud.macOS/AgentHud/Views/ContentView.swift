@@ -23,6 +23,9 @@ public struct ContentView: View {
             }
         }
         .padding(14)
+        // Stretch the panel so it always fills the window (the window reserves a
+        // hidden title bar area on top; leaving it unstretched shows a gap).
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(HudTheme.background)
@@ -40,9 +43,11 @@ public struct ContentView: View {
             Text("AGENTS")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(HudTheme.dim)
+                .allowsHitTesting(false)
             Text("\(visibleSessions.count)")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
+                .allowsHitTesting(false)
             Spacer()
             Button(action: { showSettings.toggle() }) {
                 Image(systemName: "gearshape")
@@ -70,18 +75,21 @@ public struct ContentView: View {
             .help(Localiz.current.string("Common.Close"))
         }
         .padding(.bottom, 8)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            viewModel.toggleMinimized()
-        }
+        // Drag the window from anywhere on the header; double-click toggles minimized.
+        .background(WindowDragHandle { viewModel.toggleMinimized() })
     }
 
     private var minimizedContent: some View {
         HStack(spacing: 4) {
             ForEach(visibleSessions) { session in
                 StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+                    .allowsHitTesting(false)
             }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        // Drag from the minimized bar; double-click restores the full panel.
+        .background(WindowDragHandle { viewModel.toggleMinimized() })
     }
 
     private var fullContent: some View {
@@ -91,6 +99,7 @@ public struct ContentView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(HudTheme.secondary)
                     .padding(.vertical, 8)
+                    .allowsHitTesting(false)
             } else {
                 ForEach(visibleSessions) { session in
                     SessionRow(session: session, viewModel: viewModel)
@@ -159,21 +168,25 @@ struct SessionRow: View {
     var body: some View {
         HStack(spacing: 6) {
             StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+                .allowsHitTesting(false)
             AgentIconView(type: session.agentType)
                 .frame(width: 16, height: 16)
                 .help(session.agentType.displayName)
+                .allowsHitTesting(false)
             Text(session.projectName)
                 .font(.system(size: 12))
                 .foregroundStyle(HudTheme.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: 92, alignment: .leading)
+                .allowsHitTesting(false)
             Text(session.displayTitle)
                 .font(.system(size: 12))
                 .foregroundStyle(HudTheme.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .allowsHitTesting(false)
             if hovering {
                 Button(action: { viewModel.hideSession(session.id) }) {
                     Text("×")

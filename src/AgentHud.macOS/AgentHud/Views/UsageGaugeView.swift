@@ -21,10 +21,12 @@ struct UsageGaugeView: View {
             AgentIconView(type: row.agent)
                 .frame(width: 14, height: 14)
                 .help(row.agent.displayName)
+                .allowsHitTesting(false)
             Text(row.displayLabel)
                 .font(.system(size: 11))
                 .foregroundStyle(HudTheme.dim)
                 .frame(width: 34, alignment: .leading)
+                .allowsHitTesting(false)
             if row.usedPercent != nil {
                 UsageBarView(row: row)
                     .frame(maxWidth: .infinity)
@@ -35,6 +37,7 @@ struct UsageGaugeView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(HudTheme.secondary)
                 .lineLimit(1)
+                .allowsHitTesting(false)
         }
     }
 }
