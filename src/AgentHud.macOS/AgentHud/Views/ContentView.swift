@@ -22,20 +22,24 @@ public struct ContentView: View {
                 fullContent
             }
         }
-        .padding(14)
-        // Stretch the panel so it always fills the window (the window reserves a
-        // hidden title bar area on top; leaving it unstretched shows a gap).
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Minimized mode shrinks the padding to a compact bar (Windows: 4,2).
+        .padding(viewModel.isMinimized
+                 ? EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4)
+                 : EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
+        .frame(maxWidth: viewModel.isMinimized ? nil : .infinity,
+               maxHeight: .infinity,
+               alignment: .top)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: viewModel.isMinimized ? 10 : 14, style: .continuous)
                 .fill(HudTheme.background)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: viewModel.isMinimized ? 10 : 14, style: .continuous)
                 .stroke(HudTheme.border, lineWidth: 1)
         )
-        .frame(width: 320)
-        .background(WindowConfigurator())
+        // Minimized mode sizes to the dots row; full mode keeps the fixed panel width.
+        .frame(width: viewModel.isMinimized ? nil : 320)
+        .background(WindowConfigurator(minimized: viewModel.isMinimized))
     }
 
     private var header: some View {
@@ -49,32 +53,21 @@ public struct ContentView: View {
                 .foregroundStyle(.white)
                 .allowsHitTesting(false)
             Spacer()
-            Button(action: { showSettings.toggle() }) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 12))
+            HeaderButton(symbol: "gearshape", help: Localiz.current.string("Main.Settings")) {
+                showSettings.toggle()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(HudTheme.dim)
-            .help(Localiz.current.string("Main.Settings"))
             .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                 SettingsPopover(viewModel: viewModel)
             }
-            Button(action: { viewModel.toggleMinimized() }) {
-                Image(systemName: viewModel.isMinimized ? "plus" : "minus")
-                    .font(.system(size: 12))
+            HeaderButton(symbol: viewModel.isMinimized ? "plus" : "minus",
+                         help: Localiz.current.string("Main.Minimize")) {
+                viewModel.toggleMinimized()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(HudTheme.dim)
-            .help(Localiz.current.string("Main.Minimize"))
-            Button(action: { NSApplication.shared.terminate(nil) }) {
-                Text("×")
-                    .font(.system(size: 15))
+            HeaderButton(text: "×", help: Localiz.current.string("Common.Close")) {
+                NSApplication.shared.terminate(nil)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(HudTheme.dim)
-            .help(Localiz.current.string("Common.Close"))
         }
-        .padding(.bottom, 8)
+        .padding(.bottom, viewModel.isMinimized ? 0 : 8)
         // Drag the window from anywhere on the header; double-click toggles minimized.
         .background(WindowDragHandle { viewModel.toggleMinimized() })
     }
@@ -83,12 +76,11 @@ public struct ContentView: View {
         HStack(spacing: 4) {
             ForEach(visibleSessions) { session in
                 StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
-                    .allowsHitTesting(false)
+                    .help(session.projectName)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
-        // Drag from the minimized bar; double-click restores the full panel.
+        .frame(minWidth: 6)
+        // Drag the bar to move it; double-click restores the full panel.
         .background(WindowDragHandle { viewModel.toggleMinimized() })
     }
 
@@ -122,6 +114,42 @@ public struct ContentView: View {
                 }
             }
         }
+    }
+}
+
+/// Header control with hover feedback, mirroring the Windows app's button highlight.
+struct HeaderButton: View {
+    var symbol: String?
+    var text: String?
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 12, weight: .medium))
+                } else {
+                    Text(text ?? "")
+                        .font(.system(size: 15))
+                }
+            }
+            .foregroundStyle(hovering ? Color.white : HudTheme.dim)
+            .frame(minWidth: 16)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(hovering ? Color.white.opacity(0.2) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
 
@@ -201,6 +229,7 @@ struct SessionRow: View {
                     .foregroundStyle(HudTheme.secondary)
                     .lineLimit(1)
                     .help(session.statusTip)
+                    .allowsHitTesting(false)
             }
         }
         .padding(.vertical, 3)

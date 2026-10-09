@@ -14,10 +14,12 @@ final class DraggableWindowBackgroundView: NSView {
 }
 
 /// Attaches to the HUD content view and configures the exact NSWindow that hosts it:
-/// floating level, all-Spaces visibility, hidden title bar chrome, drag-anywhere,
-/// and saved/restored position. Using the view's own window avoids targeting the
-/// wrong window (e.g. a popover) the way NSApp.windows.first can.
+/// borderless floating window on all Spaces, drag-anywhere support, and saved position.
+/// Also keeps the window's top and right edges stable when the content resizes
+/// (e.g. minimizing to the dots bar), matching the Windows behavior.
 struct WindowConfigurator: NSViewRepresentable {
+    let minimized: Bool
+
     private static let originKey = "hud.window.origin"
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -27,6 +29,9 @@ struct WindowConfigurator: NSViewRepresentable {
         var didRestoreOrigin = false
         var didLogDiagnostics = false
         var moveObserver: NSObjectProtocol?
+        var resizeObserver: NSObjectProtocol?
+        var rightEdge: CGFloat?
+        var topEdge: CGFloat?
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -43,6 +48,9 @@ struct WindowConfigurator: NSViewRepresentable {
         if let observer = coordinator.moveObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = coordinator.resizeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     private func configure(_ window: NSWindow?, coordinator: Coordinator) {
@@ -50,28 +58,30 @@ struct WindowConfigurator: NSViewRepresentable {
         if coordinator.window !== window {
             coordinator.window = window
             coordinator.didRestoreOrigin = false
+            coordinator.rightEdge = window.frame.maxX
+            coordinator.topEdge = window.frame.maxY
+        }
+
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Drop the title bar entirely: a hidden title bar still reserves ~28pt,
+        // which otherwise shows as a transparent strip or extra padding.
+        window.styleMask.remove(.titled)
+        window.styleMask.remove(.resizable)
+        window.isMovableByWindowBackground = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(button)?.isHidden = true
         }
 
         if !coordinator.didLogDiagnostics {
             coordinator.didLogDiagnostics = true
             let mask = window.styleMask
             print("Window diagnostics: frame=\(window.frame) contentLayoutRect=\(window.contentLayoutRect) " +
-                  "styleMask=\(mask) fullSizeContentView=\(mask.contains(.fullSizeContentView)) " +
-                  "hostingSafeArea=\(String(describing: window.contentView?.safeAreaInsets))")
-        }
-
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        // Let the content extend under the (transparent) title bar area.
-        window.styleMask.insert(.fullSizeContentView)
-        window.styleMask.remove(.resizable)
-        window.isMovableByWindowBackground = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(button)?.isHidden = true
+                  "styleMask=\(mask) titled=\(mask.contains(.titled)) " +
+                  "safeArea=\(String(describing: window.contentView?.safeAreaInsets))")
         }
 
         if !coordinator.didRestoreOrigin {
@@ -83,10 +93,26 @@ struct WindowConfigurator: NSViewRepresentable {
                 forName: NSWindow.didMoveNotification,
                 object: window,
                 queue: .main
-            ) { [weak window] _ in
-                guard let window else { return }
+            ) { [weak window, weak coordinator] _ in
+                guard let window, let coordinator else { return }
+                coordinator.rightEdge = window.frame.maxX
+                coordinator.topEdge = window.frame.maxY
                 let origin = window.frame.origin
                 UserDefaults.standard.set([origin.x, origin.y], forKey: Self.originKey)
+            }
+        }
+        if coordinator.resizeObserver == nil {
+            coordinator.resizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak window, weak coordinator] _ in
+                guard let window, let coordinator else { return }
+                guard let right = coordinator.rightEdge, let top = coordinator.topEdge else { return }
+                let target = NSPoint(x: right - window.frame.width, y: top - window.frame.height)
+                if abs(window.frame.origin.x - target.x) > 0.5 || abs(window.frame.origin.y - target.y) > 0.5 {
+                    window.setFrameOrigin(target)
+                }
             }
         }
     }
