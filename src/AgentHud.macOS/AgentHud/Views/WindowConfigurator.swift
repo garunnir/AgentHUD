@@ -1,6 +1,18 @@
 import SwiftUI
 import AppKit
 
+/// Background view that drags the window when the user drags anywhere that is not
+/// an interactive control. SwiftUI content (a hosting view) can swallow mouse events,
+/// which makes NSWindow.isMovableByWindowBackground unreliable, so we drag explicitly
+/// via NSWindow.performDrag.
+final class DraggableWindowBackgroundView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
 /// Attaches to the HUD content view and configures the exact NSWindow that hosts it:
 /// floating level, all-Spaces visibility, hidden title bar chrome, drag-anywhere,
 /// and saved/restored position. Using the view's own window avoids targeting the
@@ -13,11 +25,12 @@ struct WindowConfigurator: NSViewRepresentable {
     final class Coordinator {
         var window: NSWindow?
         var didRestoreOrigin = false
+        var didLogDiagnostics = false
         var moveObserver: NSObjectProtocol?
     }
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = DraggableWindowBackgroundView()
         DispatchQueue.main.async { configure(view.window, coordinator: context.coordinator) }
         return view
     }
@@ -37,6 +50,14 @@ struct WindowConfigurator: NSViewRepresentable {
         if coordinator.window !== window {
             coordinator.window = window
             coordinator.didRestoreOrigin = false
+        }
+
+        if !coordinator.didLogDiagnostics {
+            coordinator.didLogDiagnostics = true
+            let mask = window.styleMask
+            print("Window diagnostics: frame=\(window.frame) contentLayoutRect=\(window.contentLayoutRect) " +
+                  "styleMask=\(mask) fullSizeContentView=\(mask.contains(.fullSizeContentView)) " +
+                  "hostingSafeArea=\(String(describing: window.contentView?.safeAreaInsets))")
         }
 
         window.level = .floating

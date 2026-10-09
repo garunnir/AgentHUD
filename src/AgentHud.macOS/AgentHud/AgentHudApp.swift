@@ -15,6 +15,9 @@ struct AgentHudApp: App {
         Window("Agent HUD", id: "hud") {
             ContentView(viewModel: viewModel)
                 .frame(width: 320)
+                // The window reserves title bar space even when hidden; ignore the
+                // safe area so the panel fills it (no transparent strip on top).
+                .ignoresSafeArea()
                 .onAppear {
                     viewModel.start()
                     NSApp.activate(ignoringOtherApps: true)
