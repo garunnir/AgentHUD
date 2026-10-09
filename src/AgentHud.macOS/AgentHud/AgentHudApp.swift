@@ -3,6 +3,7 @@ import AppKit
 
 @main
 struct AgentHudApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var viewModel = AgentHudViewModel()
 
     init() {
@@ -11,15 +12,16 @@ struct AgentHudApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("Agent HUD", id: "hud") {
             ContentView(viewModel: viewModel)
-                .frame(width: 320, height: 400)
+                .frame(width: 320)
                 .onAppear {
                     viewModel.start()
                     NSApp.activate(ignoringOtherApps: true)
                 }
         }
         .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
         .defaultSize(width: 320, height: 400)
     }
 }

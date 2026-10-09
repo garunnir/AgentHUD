@@ -45,6 +45,10 @@ public struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            viewModel.toggleMinimized()
+        }
     }
 
     private var minimizedContent: some View {
