@@ -4,6 +4,9 @@ public final class ClaudeCodeProvider: IAgentProvider {
     public let agentType: AgentType = .claudeCode
     public var watchRoots: [String] { [sessionsRoot, projectsRoot] }
 
+    /// Usage is summed over the last 7 days, so older transcript events never count.
+    private static let usageWindow: TimeInterval = 7 * 86400
+
     private let sessionsRoot: String
     private let projectsRoot: String
     private var transcripts: [String: (length: Int64, modified: Date, info: TranscriptInfo)] = [:]
@@ -40,7 +43,9 @@ public final class ClaudeCodeProvider: IAgentProvider {
             if json["entrypoint"] as? String == "claude-vscode" && state == .idle
                 && UUID(uuidString: sessionId) != nil && !hasTranscript(sessionId) { continue }
 
-            let transcript = try await readTranscript(sessionId)
+            let transcript = transcriptIsStale(sessionId)
+                ? TranscriptInfo()
+                : try await readTranscript(sessionId)
             var finalState = state
             if alive && transcript.hasPendingQuestion
                 && state != AgentState.error && state != AgentState.stopped && state != AgentState.waitingForApproval {
@@ -90,6 +95,21 @@ public final class ClaudeCodeProvider: IAgentProvider {
         guard FileManager.default.fileExists(atPath: projectsRoot) else { return false }
         guard let projects = try? FileManager.default.contentsOfDirectory(atPath: projectsRoot) else { return false }
         return projects.contains { FileManager.default.fileExists(atPath: ($0 as NSString).appendingPathComponent("\(sessionId).jsonl")) }
+    }
+
+    /// True when the transcript has not been touched since before the usage window,
+    /// so reading it could only surface events older than the window.
+    private func transcriptIsStale(_ sessionId: String) -> Bool {
+        // Transcript mtimes below the usage window can only hold events that are already
+        // older than the 7-day window, so they add nothing to any session.
+        let cutoff = Date().addingTimeInterval(-Self.usageWindow)
+        guard let projects = try? FileManager.default.contentsOfDirectory(atPath: projectsRoot) else { return true }
+        for project in projects {
+            let path = (project as NSString).appendingPathComponent("\(sessionId).jsonl")
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            return fileModificationDate(path) < cutoff
+        }
+        return true
     }
 
     private struct TranscriptInfo {

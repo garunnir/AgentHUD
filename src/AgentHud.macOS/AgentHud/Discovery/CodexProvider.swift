@@ -240,10 +240,16 @@ public final class CodexProvider: IAgentProvider {
     private func readFirstLine(_ path: String) throws -> String? {
         guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? stream.close() }
-        // Read only a bounded prefix; the session_meta line is the first line.
-        let chunk = try? stream.read(upToCount: 262144)
-        guard let chunk = chunk, let content = String(data: chunk, encoding: .utf8) else { return nil }
-        return content.components(separatedBy: "\n").first
+        // Stop at the first newline; decoding a fixed prefix would read ~256 KB per
+        // file, which dominates the scan across thousands of rollout files.
+        var data = Data()
+        while data.count < 262144 {
+            guard let chunk = try? stream.read(upToCount: 8192), !chunk.isEmpty else { break }
+            data.append(chunk)
+            if data.contains(0x0A) { break }
+        }
+        guard let content = String(data: data, encoding: .utf8) else { return nil }
+        return String(content.prefix { $0 != "\n" })
     }
 
     private func refreshTitles() async {
