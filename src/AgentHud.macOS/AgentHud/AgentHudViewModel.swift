@@ -13,6 +13,9 @@ public final class AgentHudViewModel: ObservableObject {
     }
     // Show waiting states as ? / ! symbols instead of yellow dots (off by default, like Windows).
     @Published public var showWaitingSymbols = false
+    /// True until the first discovery pass finishes, so the HUD can show a spinner
+    /// instead of claiming there are no sessions.
+    @Published public var isScanning = true
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -32,7 +35,11 @@ public final class AgentHudViewModel: ObservableObject {
         self.discovery = AgentDiscoveryService(providers: providers, registry: registry)
 
         registry.onChanged = { [weak self] in
-            Task { @MainActor in self?.sessions = self?.registry.getAllAgents() ?? [] }
+            Task { @MainActor in
+                guard let self else { return }
+                self.sessions = self.registry.getAllAgents()
+                self.isScanning = false
+            }
         }
     }
 

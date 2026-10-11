@@ -92,7 +92,17 @@ public struct ContentView: View {
 
     private var fullContent: some View {
         VStack(spacing: 0) {
-            if visibleSessions.isEmpty {
+            if viewModel.isScanning && visibleSessions.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Scanning sessions…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(HudTheme.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } else if visibleSessions.isEmpty {
                 Text("No active sessions")
                     .font(.system(size: 12))
                     .foregroundStyle(HudTheme.secondary)

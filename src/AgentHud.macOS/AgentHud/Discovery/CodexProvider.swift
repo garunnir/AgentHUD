@@ -5,6 +5,8 @@ public final class CodexProvider: IAgentProvider {
     public var watchRoots: [String] { [sessionsRoot] }
 
     public static let limitGrace: TimeInterval = 1800
+    /// Completed/inactive sessions stay listed this long after their last event.
+    private static let completionRetention: TimeInterval = 1800
 
     private let sessionsRoot: String
     private let indexPath: String
@@ -37,6 +39,11 @@ public final class CodexProvider: IAgentProvider {
         let files = try FileManager.default.subpathsOfDirectory(atPath: sessionsRoot)
             .filter { $0.hasSuffix(".jsonl") }
 
+        // Anything untouched for longer than the retention window can only be listed
+        // while it waits for a usage-limit reset, so older rollout files skip the full
+        // parse after a cheap marker check instead of reading hundreds of KB each.
+        let cutoff = Date().addingTimeInterval(-max(activeWindow, Self.completionRetention))
+
         for relative in files {
             let path = (sessionsRoot as NSString).appendingPathComponent(relative)
             seen.insert(path)
@@ -45,13 +52,20 @@ public final class CodexProvider: IAgentProvider {
             let fileLength = (attrs[.size] as? Int64) ?? 0
             let fileModified = (attrs[.modificationDate] as? Date) ?? Date()
 
+            // Fast path for old rollouts: skip the parse unless a usage-limit error is
+            // waiting to be read. This keeps startup fast with thousands of files.
+            if fileModified < cutoff, !tailContains(path, "usage_limit_exceeded") {
+                cache.removeValue(forKey: path)
+                continue
+            }
+
             if var cached = cache[path], cached.length == fileLength, cached.modified == fileModified {
                 let now = Date()
                 let age = now.timeIntervalSince(cached.session.lastActivityAt)
                 let limitPending = cached.session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
                 let limited = cached.session.rateLimitResetAt.map { $0 > now } ?? false
 
-                if age <= 1800 || age <= activeWindow || limitPending {
+                if age <= Self.completionRetention || age <= activeWindow || limitPending {
                     var session = cached.session
                     session.sessionTitle = titles[session.id]
                     session.state = limited ? .rateLimited : session.state
@@ -189,7 +203,7 @@ public final class CodexProvider: IAgentProvider {
             let limitPending = session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
             let limited = session.rateLimitResetAt.map { $0 > now } ?? false
 
-            if age <= 1800 || age <= activeWindow || limitPending {
+            if age <= Self.completionRetention || age <= activeWindow || limitPending {
                 session.state = limited ? .rateLimited : session.state
                 session.isActive = limitPending || (session.state != .stopped && age <= activeWindow)
                 result.append(session)
@@ -235,6 +249,19 @@ public final class CodexProvider: IAgentProvider {
         guard let used = window["used_percent"] as? Double else { return nil }
         guard let resets = window["resets_at"] as? Int64 else { return nil }
         return LimitWindow(usedPercent: used, resetsAt: Date(timeIntervalSince1970: TimeInterval(resets)))
+    }
+
+    /// Reads only the last few KB of a rollout file to look for a marker.
+    private func tailContains(_ path: String, _ needle: String, maxBytes: Int = 8192) -> Bool {
+        guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return false }
+        defer { try? stream.close() }
+        let length = (try? stream.seekToEnd()) ?? 0
+        guard length > 0 else { return false }
+        let offset = length > UInt64(maxBytes) ? length - UInt64(maxBytes) : 0
+        try? stream.seek(toOffset: offset)
+        guard let data = try? stream.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return false }
+        return text.contains(needle)
     }
 
     private func readFirstLine(_ path: String) throws -> String? {
