@@ -11,13 +11,18 @@ struct UsageRow: Identifiable, Equatable {
     /// When this snapshot was recorded. Limits come from local session logs, so the
     /// value can be minutes old; the HUD says so instead of implying it is live.
     var updatedAt: Date?
+    /// True for values read straight from the server: they are only one refresh
+    /// interval old, so they are not labelled with an age like a log snapshot is.
+    var fromServer = false
+    /// Remaining % that the amber warning line marks (<= 0 hides it).
+    var warningPercent: Double = 0
     private static let staleAfter: TimeInterval = 300
 
     var displayLabel: String { label == "week" ? Localiz.current.string("Usage.Week") : label }
     var remainingPercent: Double { 100 - (usedPercent ?? 0) }
     /// True once the snapshot is old enough that the real usage may have moved on.
     var isStale: Bool {
-        guard let updatedAt else { return false }
+        guard let updatedAt, !fromServer else { return false }
         return Date().timeIntervalSince(updatedAt) > Self.staleAfter
     }
     /// "3h 0m" when fresh, "3h 0m · 1h 4m ago" once the snapshot is old.
@@ -36,6 +41,9 @@ struct UsageRow: Identifiable, Equatable {
 
 struct UsageGaugeView: View {
     let row: UsageRow
+    /// Width of the right-hand time column. Shared by every row so all bars end at
+    /// the same x, measured from the widest string any of them shows.
+    let timeColumnWidth: CGFloat
 
     var body: some View {
         HStack(spacing: 5) {
@@ -58,6 +66,7 @@ struct UsageGaugeView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(HudTheme.secondary)
                 .lineLimit(1)
+                .frame(width: timeColumnWidth, alignment: .trailing)
                 .allowsHitTesting(false)
         }
     }
@@ -68,20 +77,35 @@ struct UsageBarView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let width = geo.size.width
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(HudTheme.barTrack)
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(HudTheme.usageFill(usedPercent: row.usedPercent ?? 0))
-                    .frame(width: max(0, geo.size.width * row.remainingPercent / 100))
+                    .fill(HudTheme.usageFill(
+                        remainingPercent: row.remainingPercent,
+                        warningPercent: row.warningPercent
+                    ))
+                    .frame(width: max(0, width * row.remainingPercent / 100))
+                // White marker: where the remaining usage should sit at this point in
+                // the window. Details in the tooltip.
                 if let pace = row.pacePercent {
                     Rectangle()
                         .fill(Color.white.opacity(0.9))
                         .frame(width: 2)
-                        .offset(x: min(max(geo.size.width * pace / 100 - 1, 0), max(0, geo.size.width - 2)))
+                        .offset(x: markerOffset(pace, width: width))
                         .help(paceTip(pace))
                 }
-                                Text("\(Int(row.remainingPercent.rounded()))%")
+                // Amber marker: configurable warning threshold. When the bar's end
+                // crosses it the fill turns amber too.
+                if row.warningPercent > 0 {
+                    Rectangle()
+                        .fill(HudTheme.warning)
+                        .frame(width: 2)
+                        .offset(x: markerOffset(row.warningPercent, width: width))
+                        .help(warningTip)
+                }
+                Text("\(Int(row.remainingPercent.rounded()))%")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -91,15 +115,33 @@ struct UsageBarView: View {
         .frame(height: 16)
     }
 
+    /// Keeps a 2pt marker inside the bar.
+    private func markerOffset(_ percent: Double, width: CGFloat) -> CGFloat {
+        min(max(width * percent / 100 - 1, 0), max(0, width - 2))
+    }
+
     private func paceTip(_ pace: Double) -> String {
-        HudTheme.formatPattern(Localiz.current.string("Usage.PaceTip"), [pace])
+        HudTheme.formatPattern(Localiz.current.string("Usage.PaceTip"), [Int(pace.rounded())])
+    }
+
+    private var warningTip: String {
+        HudTheme.formatPattern(Localiz.current.string("Usage.WarningTip"),
+                               [Int(row.warningPercent.rounded())])
     }
 
     private var barTip: String {
         var parts = ["\(Int(row.remainingPercent.rounded()))%"]
         if !row.text.isEmpty { parts.append(row.text) }
-        if let updated = row.updatedAt {
-            parts.append(HudTheme.formatPattern(Localiz.current.string("Usage.RecordedAt"), [updated.formatted(date: .omitted, time: .shortened)]))
+        if row.fromServer {
+            parts.append(Localiz.current.string("Usage.Live"))
+        } else if let updated = row.updatedAt {
+            parts.append(HudTheme.formatPattern(
+                Localiz.current.string("Usage.RecordedAt"),
+                [updated.formatted(date: .omitted, time: .shortened)]
+            ))
+        }
+        if row.warningPercent > 0, row.remainingPercent <= row.warningPercent {
+            parts.append(warningTip)
         }
         return parts.joined(separator: " · ")
     }

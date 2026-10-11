@@ -15,32 +15,44 @@ public struct ContentView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
+            // Minimized mode drops the whole header: it becomes a pill of dots, so the
+            // only way back is a double-click on the bar.
             if viewModel.isMinimized {
                 minimizedContent
             } else {
+                header
                 fullContent
             }
         }
-        // Minimized mode shrinks the padding to a compact bar (Windows: 4,2).
         .padding(viewModel.isMinimized
                  ? EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4)
                  : EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
-        .frame(maxWidth: viewModel.isMinimized ? nil : .infinity,
-               maxHeight: .infinity,
-               alignment: .top)
+        // Height follows the content: only the rows that are actually shown reserve
+        // space, so the panel has no empty strip at the bottom.
+        .frame(maxWidth: viewModel.isMinimized ? nil : .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: viewModel.isMinimized ? 10 : 14, style: .continuous)
+            RoundedRectangle(cornerRadius: panelCornerRadius, style: .continuous)
                 .fill(HudTheme.background)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: viewModel.isMinimized ? 10 : 14, style: .continuous)
+            RoundedRectangle(cornerRadius: panelCornerRadius, style: .continuous)
                 .stroke(HudTheme.border, lineWidth: 1)
         )
         // Minimized mode sizes to the dots row; full mode keeps the fixed panel width.
         .frame(width: viewModel.isMinimized ? nil : 320)
-        .background(WindowConfigurator(minimized: viewModel.isMinimized))
+        .background(
+            Group {
+                if viewModel.isPreviewMode {
+                    Color.clear
+                } else {
+                    WindowConfigurator(minimized: viewModel.isMinimized)
+                }
+            }
+        )
     }
+
+    /// The dots bar is 22pt tall, so half of that makes it a pill.
+    private var panelCornerRadius: CGFloat { viewModel.isMinimized ? 11 : 14 }
 
     private var header: some View {
         HStack(spacing: 6) {
@@ -59,17 +71,24 @@ public struct ContentView: View {
             .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                 SettingsPopover(viewModel: viewModel)
             }
-            HeaderButton(symbol: viewModel.isMinimized ? "plus" : "minus",
-                         help: Localiz.current.string("Main.Minimize")) {
+            HeaderButton(symbol: "minus", help: Localiz.current.string("Main.Minimize")) {
                 viewModel.toggleMinimized()
             }
             HeaderButton(text: "×", help: Localiz.current.string("Common.Close")) {
                 NSApplication.shared.terminate(nil)
             }
         }
-        .padding(.bottom, viewModel.isMinimized ? 0 : 8)
+        .padding(.bottom, 8)
         // Drag the window from anywhere on the header; double-click toggles minimized.
-        .background(WindowDragHandle { viewModel.toggleMinimized() })
+        .background(
+            Group {
+                if viewModel.isPreviewMode {
+                    Color.clear
+                } else {
+                    WindowDragHandle { viewModel.toggleMinimized() }
+                }
+            }
+        )
     }
 
     private var minimizedContent: some View {
@@ -83,10 +102,16 @@ public struct ContentView: View {
         // Native overlay: drag the bar to move it, double-click restores, and each
         // dot shows a native tooltip with its project and status.
         .overlay(
-            MiniBarOverlay(
-                tooltips: visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
-                onDoubleClick: { viewModel.toggleMinimized() }
-            )
+            Group {
+                if viewModel.isPreviewMode {
+                    Color.clear
+                } else {
+                    MiniBarOverlay(
+                        tooltips: visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
+                        onDoubleClick: { viewModel.toggleMinimized() }
+                    )
+                }
+            }
         )
     }
 
@@ -124,12 +149,43 @@ public struct ContentView: View {
             Divider()
                 .overlay(Color.white.opacity(0.1))
                 .padding(.vertical, 6)
-            VStack(spacing: 2) {
-                ForEach(rows) { row in
-                    UsageGaugeView(row: row)
+            let blocks = groups(of: rows)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(blocks.indices), id: \.self) { index in
+                    if index > 0 { Color.clear.frame(height: 10) }
+                    VStack(spacing: 5) {
+                        ForEach(blocks[index]) { row in
+                            UsageGaugeView(row: row, timeColumnWidth: timeColumnWidth(rows))
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// Rows stay in one block per agent, with a wider gap between agents.
+    private func groups(of rows: [UsageRow]) -> [[UsageRow]] {
+        var result: [[UsageRow]] = []
+        for row in rows {
+            if let last = result.indices.last, result[last].first?.agent == row.agent {
+                result[last].append(row)
+            } else {
+                result.append([row])
+            }
+        }
+        return result
+    }
+
+    /// Widest right-hand string across the rows, so every bar ends at the same x
+    /// instead of shifting as the reset text changes length.
+    private func timeColumnWidth(_ rows: [UsageRow]) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11)
+        var width: CGFloat = 0
+        for row in rows {
+            let measured = (row.displayText as NSString).size(withAttributes: [.font: font]).width
+            width = max(width, measured)
+        }
+        return width.rounded(.up) + 2
     }
 }
 
@@ -141,6 +197,10 @@ struct HeaderButton: View {
     let action: () -> Void
 
     @State private var hovering = false
+
+    /// All three controls share one hit target: a bare "×" is much narrower than a
+    /// symbol, which would otherwise leave it hard to click.
+    static let hitSize = CGSize(width: 22, height: 18)
 
     var body: some View {
         Button(action: action) {
@@ -154,9 +214,7 @@ struct HeaderButton: View {
                 }
             }
             .foregroundStyle(hovering ? Color.white : HudTheme.dim)
-            .frame(minWidth: 16)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .frame(width: Self.hitSize.width, height: Self.hitSize.height)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(hovering ? Color.white.opacity(0.2) : Color.clear)
@@ -173,6 +231,7 @@ struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
+    private let warningChoices = Array(stride(from: 0, through: 90, by: 5))
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -189,6 +248,24 @@ struct SettingsPopover: View {
                     .font(.system(size: 12))
             }
             .toggleStyle(.checkbox)
+            VStack(alignment: .leading, spacing: 4) {
+                Picker(selection: $viewModel.warningPercent) {
+                    ForEach(warningChoices, id: \.self) { percent in
+                        Text(percent == 0
+                             ? Localiz.current.string("Settings.WarningOff")
+                             : "\(percent)%")
+                            .tag(percent)
+                    }
+                } label: {
+                    Text(Localiz.current.string("Settings.WarningLine"))
+                        .font(.system(size: 12))
+                }
+                .frame(width: 220)
+                Text(Localiz.current.string("Settings.WarningHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !viewModel.hiddenSessionIds.isEmpty {
                 Button(HudTheme.formatPattern(Localiz.current.string("Main.ShowHidden"), [viewModel.hiddenSessionIds.count])) {
                     viewModel.showHiddenSessions()

@@ -90,6 +90,14 @@ struct WindowConfigurator: NSViewRepresentable {
             coordinator.didRestoreOrigin = true
             restoreOrigin(of: window)
         }
+        // The window has to be exactly as tall as what it shows. SwiftUI keeps a
+        // window that was ever resized, so pin the height to the content's ideal size
+        // whenever the rows change (a session ending, a minimized bar, ...).
+        if let ideal = window.contentView?.fittingSize,
+           ideal.height > 20,
+           abs(window.contentLayoutRect.height - ideal.height) > 0.5 {
+            window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: ideal.height))
+        }
         if coordinator.moveObserver == nil {
             coordinator.moveObserver = NotificationCenter.default.addObserver(
                 forName: NSWindow.didMoveNotification,

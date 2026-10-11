@@ -13,17 +13,27 @@ public final class AgentHudViewModel: ObservableObject {
     }
     // Show waiting states as ? / ! symbols instead of yellow dots (off by default, like Windows).
     @Published public var showWaitingSymbols = false
+    /// Remaining-% the amber warning line marks in the usage bars (0 hides it).
+    @Published public var warningPercent: Double = 30 {
+        didSet { UserDefaults.standard.set(warningPercent, forKey: Self.warningPercentKey) }
+    }
     /// True until the first discovery pass finishes, so the HUD can show a spinner
     /// instead of claiming there are no sessions.
     @Published public var isScanning = true
     /// Live Codex usage from the server (nil until the first successful fetch).
     @Published private(set) var liveUsage: CodexUsage?
+    /// Set by the `--render=` debug hook: drops the AppKit overlays, which paint a
+    /// solid color over the view when it is rendered offscreen instead of in a window.
+    public var isPreviewMode = false
 
     private var liveUsageFetchedAt: Date?
     private var liveUsageRetryAt: Date?
     private var liveUsageTask: Task<Void, Never>?
     /// Backoff after a failed fetch, so a blocked endpoint is not hit every cycle.
     private static let liveUsageFailureRetry: TimeInterval = 60
+    /// Warning line default, also used when the stored value is missing.
+    private static let defaultWarningPercent: Double = 30
+    private static let warningPercentKey = "hud.warningPercent"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -48,6 +58,12 @@ public final class AgentHudViewModel: ObservableObject {
                 self.sessions = self.registry.getAllAgents()
                 self.isScanning = false
             }
+        }
+
+        if let saved = UserDefaults.standard.object(forKey: Self.warningPercentKey) as? Double {
+            self.warningPercent = saved
+        } else {
+            self.warningPercent = Self.defaultWarningPercent
         }
     }
 
@@ -211,10 +227,10 @@ public final class AgentHudViewModel: ObservableObject {
         let live = liveUsage
         if live?.primary != nil {
             rows.append(codexRow(agent: .codex, label: "5h", window: live!.primary!,
-                                 updatedAt: liveUsageFetchedAt, now: now))
+                                 updatedAt: liveUsageFetchedAt, now: now, fromServer: true))
             if let week = live?.secondary {
                 rows.append(codexRow(agent: .codex, label: "week", window: week,
-                                     updatedAt: liveUsageFetchedAt, now: now))
+                                     updatedAt: liveUsageFetchedAt, now: now, fromServer: true))
             }
         } else if sessions.contains(where: { $0.agentType == .codex }) {
             // Limits are account-wide, so use the session with the freshest snapshot.
@@ -258,7 +274,8 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     private func codexRow(agent: AgentType, label: String, window: LimitWindow,
-                          updatedAt: Date? = nil, now: Date) -> UsageRow {
+                          updatedAt: Date? = nil, now: Date,
+                          fromServer: Bool = false) -> UsageRow {
         let loc = Localiz.current
         let used = window.percentAt(now)
         let left = window.resetsAt.timeIntervalSince(now)
@@ -278,6 +295,59 @@ public final class AgentHudViewModel: ObservableObject {
         let length = TimeInterval(window.windowMinutes ?? fallbackMinutes) * 60
         let pace: Double? = (left <= 0 || left > length) ? nil : left / length * 100
         return UsageRow(id: "\(agent.rawValue)-\(label)", agent: agent, label: label,
-                        usedPercent: used, text: text, pacePercent: pace, updatedAt: updatedAt)
+                        usedPercent: used, text: text, pacePercent: pace, updatedAt: updatedAt,
+                        fromServer: fromServer, warningPercent: warningPercent)
+    }
+
+    // MARK: - Debug render hook
+
+    /// Sample data for `AgentHud --render=mini|full`, which exports a preview PNG
+    /// without showing a window. Not used by the running app.
+    func installPreviewSessions() {
+        let now = Date()
+        isScanning = false
+        sessions = [
+            AgentSession(
+                id: "claude:preview-1", agentType: .claudeCode, state: .working,
+                hasUnreadCompletion: false, completionDetectedAt: nil, processId: 4242,
+                projectPath: "/Users/hail/Documents/GitHub/AgentHud",
+                worktreePath: nil, sessionTitle: "Port the HUD to macOS",
+                currentTask: nil, startedAt: now.addingTimeInterval(-3600),
+                lastActivityAt: now.addingTimeInterval(-20), isActive: true,
+                wakeupAt: nil, hasBackgroundTasks: false, parentSessionId: nil,
+                rateLimitResetAt: nil, tokens5h: 12_400_000, tokensWeek: 61_800_000,
+                primaryLimit: nil, secondaryLimit: nil, limitsUpdatedAt: nil
+            ),
+            AgentSession(
+                id: "codex:preview-2", agentType: .codex, state: .rateLimited,
+                hasUnreadCompletion: false, completionDetectedAt: nil, processId: nil,
+                projectPath: "/Users/hail/Documents/GitHub/AgentHud",
+                worktreePath: nil, sessionTitle: "Usage gauge accuracy",
+                currentTask: nil, startedAt: now.addingTimeInterval(-7200),
+                lastActivityAt: now.addingTimeInterval(-90), isActive: true,
+                wakeupAt: nil, hasBackgroundTasks: false, parentSessionId: nil,
+                rateLimitResetAt: now.addingTimeInterval(8416),
+                tokens5h: 0, tokensWeek: 0,
+                primaryLimit: LimitWindow(usedPercent: 100,
+                                          resetsAt: now.addingTimeInterval(8416),
+                                          windowMinutes: 300),
+                secondaryLimit: LimitWindow(usedPercent: 20,
+                                            resetsAt: Date(timeIntervalSince1970: 1_792_296_526),
+                                            windowMinutes: 10_080),
+                limitsUpdatedAt: now
+            ),
+            AgentSession(
+                id: "codex:preview-3", agentType: .codex, state: .waitingForInput,
+                hasUnreadCompletion: false, completionDetectedAt: nil, processId: nil,
+                projectPath: "/Users/hail/Documents/GitHub/Notes",
+                worktreePath: nil, sessionTitle: "Weekly digest",
+                currentTask: nil, startedAt: now.addingTimeInterval(-5400),
+                lastActivityAt: now.addingTimeInterval(-240), isActive: true,
+                wakeupAt: nil, hasBackgroundTasks: false, parentSessionId: nil,
+                rateLimitResetAt: nil,
+                tokens5h: 0, tokensWeek: 0,
+                primaryLimit: nil, secondaryLimit: nil, limitsUpdatedAt: nil
+            )
+        ]
     }
 }
