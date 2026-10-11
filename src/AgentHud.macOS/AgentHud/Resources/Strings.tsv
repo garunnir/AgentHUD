@@ -25,7 +25,7 @@ Usage.NoLimitInfo	No limit info	한도 정보 없음
 Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
 Usage.ResetHoursMinutes	{0}h {1}m	{0}시간 {1}분
-Usage.PaceTip	Recommended remaining {0:0}% (even pace)	권장 잔량 {0:0}% (균등 소비 기준)
+Usage.PaceTip	Even-pace target · {0:0}% remaining (bar ending left of the line = spending faster than the plan)	균등 소비 기준 권장 잔량 {0:0}% · 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 소모 중
 Usage.Live	live	실시간
 Usage.WarningTip	Warning · below {0}% remaining	경고 · 잔여 {0}% 미만
 Usage.UpdatedAgo	{0} ago	{0} 전 갱신
@@ -61,6 +61,8 @@ Settings.CodexActiveHint	Codex processes can't be detected, so a session counts 
 Settings.WarningLine	Warning line (remaining %)	잔여 경고선 (%)
 Settings.WarningOff	Off	끔
 Settings.WarningHint	The bar turns amber once the remaining usage drops to this level. 0 hides the line.	잔여 사용량이 이 수치 이하로 내려가면 막대가 주황색으로 변합니다. 0이면 선을 숨깁니다.
+Settings.PaceLine	Show the even-pace marker	균등 소비 마커 표시
+Settings.PaceLineHint	The white line marks where the remaining usage should be at this point in the window if you spend it evenly. If the bar ends left of it, you are spending faster than the plan allows.	흰 선은 이 구간을 균등하게 소모했다면 지금쯤 남아 있어야 할 위치예요. 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 쓰고 있다는 뜻입니다.
 Settings.CompleteSound	Play a sound on completion	완료 시 사운드 재생
 Settings.AskSound	Play a sound on questions (waiting for input or approval)	질문(입력·승인 대기) 시 사운드 재생
 Settings.Preview	Preview	미리 듣기

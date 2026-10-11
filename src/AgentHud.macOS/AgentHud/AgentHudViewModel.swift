@@ -17,6 +17,10 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var warningPercent: Double = 30 {
         didSet { UserDefaults.standard.set(warningPercent, forKey: Self.warningPercentKey) }
     }
+    /// White marker in the usage bars showing the even-pace position.
+    @Published public var showPaceMarker: Bool = true {
+        didSet { UserDefaults.standard.set(showPaceMarker, forKey: Self.paceMarkerKey) }
+    }
     /// True until the first discovery pass finishes, so the HUD can show a spinner
     /// instead of claiming there are no sessions.
     @Published public var isScanning = true
@@ -34,6 +38,7 @@ public final class AgentHudViewModel: ObservableObject {
     /// Warning line default, also used when the stored value is missing.
     private static let defaultWarningPercent: Double = 30
     private static let warningPercentKey = "hud.warningPercent"
+    private static let paceMarkerKey = "hud.paceMarker"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -64,6 +69,9 @@ public final class AgentHudViewModel: ObservableObject {
             self.warningPercent = saved
         } else {
             self.warningPercent = Self.defaultWarningPercent
+        }
+        if UserDefaults.standard.object(forKey: Self.paceMarkerKey) != nil {
+            self.showPaceMarker = UserDefaults.standard.bool(forKey: Self.paceMarkerKey)
         }
     }
 
@@ -269,6 +277,9 @@ public final class AgentHudViewModel: ObservableObject {
                     && (other.pacePercent.map { other.remainingPercent < $0 } ?? false)
             }
             if weekBeyondPace { rows[index].pacePercent = nil }
+        }
+        if !showPaceMarker {
+            for index in rows.indices { rows[index].pacePercent = nil }
         }
         return rows
     }

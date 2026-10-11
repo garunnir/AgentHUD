@@ -27,7 +27,7 @@ struct UsageRow: Identifiable, Equatable {
     }
     /// "3h 0m" when fresh, "3h 0m · 1h 4m ago" once the snapshot is old.
     var displayText: String {
-        guard let updatedAt, isStale, usedPercent != nil else { return text }
+        guard updatedAt != nil, isStale, usedPercent != nil else { return text }
         return text.isEmpty ? ageText(now: Date()) : "\(text) · \(ageText(now: Date()))"
     }
     private func ageText(now: Date) -> String {
@@ -90,11 +90,17 @@ struct UsageBarView: View {
                 // White marker: where the remaining usage should sit at this point in
                 // the window. Details in the tooltip.
                 if let pace = row.pacePercent {
+                    let marker = markerOffset(pace, width: width)
+                    // A 2pt line is hard to hover, so the tip gets a wider target.
+                    Color.clear
+                        .frame(width: 14, height: 16)
+                        .offset(x: marker - 7)
+                        .contentShape(Rectangle())
+                        .help(paceTip(pace))
                     Rectangle()
                         .fill(Color.white.opacity(0.9))
                         .frame(width: 2)
-                        .offset(x: markerOffset(pace, width: width))
-                        .help(paceTip(pace))
+                        .offset(x: marker)
                 }
                 // Amber marker: configurable warning threshold. When the bar's end
                 // crosses it the fill turns amber too.

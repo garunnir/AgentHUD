@@ -231,7 +231,9 @@ struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
-    private let warningChoices = Array(stride(from: 0, through: 90, by: 5))
+    /// Doubles, not Ints: the picker's tags must match the Double binding, otherwise
+    /// SwiftUI cannot show or write the selection.
+    private let warningChoices = stride(from: 0, through: 90, by: 5).map(Double.init)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -253,7 +255,7 @@ struct SettingsPopover: View {
                     ForEach(warningChoices, id: \.self) { percent in
                         Text(percent == 0
                              ? Localiz.current.string("Settings.WarningOff")
-                             : "\(percent)%")
+                             : "\(Int(percent))%")
                             .tag(percent)
                     }
                 } label: {
@@ -262,6 +264,17 @@ struct SettingsPopover: View {
                 }
                 .frame(width: 220)
                 Text(Localiz.current.string("Settings.WarningHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: $viewModel.showPaceMarker) {
+                    Text(Localiz.current.string("Settings.PaceLine"))
+                        .font(.system(size: 12))
+                }
+                .toggleStyle(.checkbox)
+                Text(Localiz.current.string("Settings.PaceLineHint"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
