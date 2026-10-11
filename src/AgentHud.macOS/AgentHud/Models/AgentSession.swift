@@ -3,10 +3,14 @@ import Foundation
 public struct LimitWindow: Codable, Equatable, Sendable {
     public let usedPercent: Double
     public let resetsAt: Date
+    /// Window length reported by the server (minutes). Used for the even-pace marker,
+    /// since plans do not always use a 5 h / 7 day window.
+    public let windowMinutes: Int?
 
-    public init(usedPercent: Double, resetsAt: Date) {
+    public init(usedPercent: Double, resetsAt: Date, windowMinutes: Int? = nil) {
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
+        self.windowMinutes = windowMinutes
     }
 
     public func percentAt(_ now: Date) -> Double {
@@ -36,6 +40,9 @@ public struct AgentSession: Identifiable, Codable, Equatable, Sendable {
     public var tokensWeek: Int64
     public var primaryLimit: LimitWindow?
     public var secondaryLimit: LimitWindow?
+    /// When the rate-limit snapshot above was recorded. Limits are account-wide, so the
+    /// freshest snapshot wins rather than the most recently active session.
+    public var limitsUpdatedAt: Date?
 
     public var displayState: AgentState {
         if hasUnreadCompletion { return .completed }

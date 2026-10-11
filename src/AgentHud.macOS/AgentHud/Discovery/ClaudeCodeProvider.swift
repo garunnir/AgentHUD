@@ -84,7 +84,8 @@ public final class ClaudeCodeProvider: IAgentProvider {
                 tokens5h: transcript.usage?.filter { $0.at > Date().addingTimeInterval(-18000) }.reduce(0) { $0 + $1.tokens } ?? 0,
                 tokensWeek: transcript.usage?.reduce(0) { $0 + $1.tokens } ?? 0,
                 primaryLimit: nil,
-                secondaryLimit: nil
+                secondaryLimit: nil,
+                limitsUpdatedAt: nil
             )
             result.append(session)
         }

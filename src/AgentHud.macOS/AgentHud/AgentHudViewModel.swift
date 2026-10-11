@@ -173,9 +173,19 @@ public final class AgentHudViewModel: ObservableObject {
         }
 
         if sessions.contains(where: { $0.agentType == .codex }) {
+            // Limits are account-wide, so use the session with the freshest snapshot.
+            // Picking the most recently *active* session can show stale numbers when
+            // that session's last token_count predates another session's.
             let latest = sessions
                 .filter { $0.agentType == .codex && $0.primaryLimit != nil }
-                .max { $0.lastActivityAt < $1.lastActivityAt }
+                .max { lhs, rhs in
+                    switch (lhs.limitsUpdatedAt, rhs.limitsUpdatedAt) {
+                    case let (left?, right?): return left < right
+                    case (nil, _?): return true
+                    case (_?, nil): return false
+                    default: return lhs.lastActivityAt < rhs.lastActivityAt
+                    }
+                }
             if let latest, let primary = latest.primaryLimit {
                 rows.append(codexRow(agent: .codex, label: "5h", window: primary, now: now))
                 if let week = latest.secondaryLimit {
@@ -216,7 +226,9 @@ public final class AgentHudViewModel: ObservableObject {
                 )
             }
         }
-        let length: TimeInterval = label == "5h" ? 5 * 3600 : 7 * 86400
+        // Prefer the server-reported window length; fall back to the usual 5 h / 7 day windows.
+        let fallbackMinutes = label == "5h" ? 5 * 60 : 7 * 24 * 60
+        let length = TimeInterval(window.windowMinutes ?? fallbackMinutes) * 60
         let pace: Double? = (left <= 0 || left > length) ? nil : left / length * 100
         return UsageRow(id: "\(agent.rawValue)-\(label)", agent: agent, label: label, usedPercent: used, text: text, pacePercent: pace)
     }

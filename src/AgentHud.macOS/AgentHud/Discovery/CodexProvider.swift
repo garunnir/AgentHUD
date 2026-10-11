@@ -109,7 +109,8 @@ public final class CodexProvider: IAgentProvider {
                 tokens5h: 0,
                 tokensWeek: 0,
                 primaryLimit: nil,
-                secondaryLimit: nil
+                secondaryLimit: nil,
+                limitsUpdatedAt: nil
             )
 
             var pendingQuestion: String?
@@ -147,6 +148,7 @@ public final class CodexProvider: IAgentProvider {
                     if let primary = parseWindow(body, "primary") {
                         session.primaryLimit = primary
                         session.secondaryLimit = parseWindow(body, "secondary") ?? session.secondaryLimit
+                        session.limitsUpdatedAt = timestamp
                     }
                 }
                 if kind == ("event_msg", "task_started") || kind == ("event_msg", "user_message") {
@@ -248,7 +250,12 @@ public final class CodexProvider: IAgentProvider {
         guard let window = limits[name] as? [String: Any] else { return nil }
         guard let used = window["used_percent"] as? Double else { return nil }
         guard let resets = window["resets_at"] as? Int64 else { return nil }
-        return LimitWindow(usedPercent: used, resetsAt: Date(timeIntervalSince1970: TimeInterval(resets)))
+        let minutes = window["window_minutes"] as? Int
+        return LimitWindow(
+            usedPercent: used,
+            resetsAt: Date(timeIntervalSince1970: TimeInterval(resets)),
+            windowMinutes: minutes
+        )
     }
 
     /// Reads only the last few KB of a rollout file to look for a marker.
