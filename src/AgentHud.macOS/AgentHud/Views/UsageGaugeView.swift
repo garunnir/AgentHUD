@@ -18,7 +18,11 @@ struct UsageRow: Identifiable, Equatable {
     var warningPercent: Double = 0
     private static let staleAfter: TimeInterval = 300
 
-    var displayLabel: String { label == "week" ? Localiz.current.string("Usage.Week") : label }
+    var displayLabel: String {
+        if label == "week" { return Localiz.current.string("Usage.Week") }
+        if label == "month" { return Localiz.current.string("Usage.Month") }
+        return label
+    }
     var remainingPercent: Double { 100 - (usedPercent ?? 0) }
     /// True once the snapshot is old enough that the real usage may have moved on.
     var isStale: Bool {

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 
 public struct ContentView: View {
     @ObservedObject var viewModel: AgentHudViewModel
@@ -145,19 +146,31 @@ public struct ContentView: View {
     @ViewBuilder
     private var usageSection: some View {
         let rows = viewModel.buildUsageRows()
-        if !rows.isEmpty {
+        if !rows.isEmpty || viewModel.isLoadingOpenCodeGoUsage {
             Divider()
                 .overlay(Color.white.opacity(0.1))
                 .padding(.vertical, 6)
-            let blocks = groups(of: rows)
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(blocks.indices), id: \.self) { index in
-                    if index > 0 { Color.clear.frame(height: 10) }
-                    VStack(spacing: 5) {
-                        ForEach(blocks[index]) { row in
-                            UsageGaugeView(row: row, timeColumnWidth: timeColumnWidth(rows))
+                if !rows.isEmpty {
+                    let blocks = groups(of: rows)
+                    ForEach(Array(blocks.indices), id: \.self) { index in
+                        if index > 0 { Color.clear.frame(height: 10) }
+                        VStack(spacing: 5) {
+                            ForEach(blocks[index]) { row in
+                                UsageGaugeView(row: row, timeColumnWidth: timeColumnWidth(rows))
+                            }
                         }
                     }
+                }
+                if viewModel.isLoadingOpenCodeGoUsage {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(Localiz.current.string("Usage.Loading"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(HudTheme.secondary)
+                    }
+                    .padding(.top, rows.isEmpty ? 0 : 7)
                 }
             }
         }
@@ -229,6 +242,7 @@ struct HeaderButton: View {
 
 struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
+    @State private var showOpenCodeLogin = false
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
     /// Doubles, not Ints: the picker's tags must match the Double binding, otherwise
@@ -268,6 +282,31 @@ struct SettingsPopover: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("OpenCode Go")
+                    .font(.system(size: 12, weight: .semibold))
+                TextField("Workspace ID (wrk_…)", text: $viewModel.openCodeWorkspaceID)
+                    .textFieldStyle(.roundedBorder)
+                Text("Paste the workspace ID from your OpenCode Console URL.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Button(OpenCodeGoUsageApi.shared.hasCookies ? "Re-login" : "Login") {
+                        showOpenCodeLogin = true
+                    }
+                    Button("Refresh") {
+                        viewModel.refreshOpenCodeGoUsage()
+                    }
+                    .disabled(viewModel.openCodeWorkspaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if OpenCodeGoUsageApi.shared.hasCookies {
+                        Button("Log out") {
+                            OpenCodeGoUsageApi.shared.clearCookies()
+                            viewModel.clearOpenCodeGoUsage()
+                        }
+                    }
+                }
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(isOn: $viewModel.showPaceMarker) {
                     Text(Localiz.current.string("Settings.PaceLine"))
@@ -291,6 +330,79 @@ struct SettingsPopover: View {
         }
         .padding(12)
         .frame(width: 260)
+        .sheet(isPresented: $showOpenCodeLogin) {
+            OpenCodeLoginView(viewModel: viewModel)
+        }
+    }
+}
+
+/// Separate Console login session. Chrome's HttpOnly cookie cannot be read by a
+/// native app, so the user signs in once in this small in-app web view instead.
+final class OpenCodeWebSession: ObservableObject {
+    var webView: WKWebView?
+
+    func readCookies(_ completion: @escaping ([HTTPCookie]) -> Void) {
+        webView?.configuration.websiteDataStore.httpCookieStore.getAllCookies(completion)
+    }
+}
+
+struct OpenCodeLoginView: View {
+    @ObservedObject var viewModel: AgentHudViewModel
+    @StateObject private var session = OpenCodeWebSession()
+    @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Sign in to OpenCode Console")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel") { dismiss() }
+            }
+            .padding(12)
+            OpenCodeWebView(session: session)
+            HStack {
+                Text(error ?? "After signing in, click Done to save this session securely.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(error == nil ? Color.secondary : Color.red)
+                    .lineLimit(2)
+                Spacer()
+                Button("Done") {
+                    session.readCookies { cookies in
+                        do {
+                            try OpenCodeGoUsageApi.shared.saveCookies(cookies)
+                            DispatchQueue.main.async {
+                                viewModel.openCodeGoCookiesSaved()
+                                dismiss()
+                            }
+                        } catch {
+                            DispatchQueue.main.async { self.error = "OpenCode Console login was not detected." }
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(12)
+        }
+        .frame(width: 760, height: 620)
+    }
+}
+
+struct OpenCodeWebView: NSViewRepresentable {
+    @ObservedObject var session: OpenCodeWebSession
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        session.webView = webView
+        webView.load(URLRequest(url: URL(string: "https://opencode.ai/console")!))
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        session.webView = nsView
     }
 }
 

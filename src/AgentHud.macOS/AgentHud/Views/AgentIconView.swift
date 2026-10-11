@@ -5,8 +5,35 @@ struct AgentIconView: View {
     let type: AgentType
 
     var body: some View {
-        ScaledArtworkShape(path: type == .claudeCode ? AgentArtwork.claude() : AgentArtwork.codex())
-            .fill(type == .claudeCode ? HudTheme.claudeFill : HudTheme.codexFill)
+        if type == .openCodeGo {
+            OpenCodeLogoView()
+        } else {
+            ScaledArtworkShape(path: type == .claudeCode ? AgentArtwork.claude() : AgentArtwork.codex())
+                .fill(type == .claudeCode ? HudTheme.claudeFill : HudTheme.codexFill)
+        }
+    }
+}
+
+/// OpenCode's official mark: a white rectangular frame with a dark upper opening
+/// and gray lower block. Kept as SwiftUI shapes so it stays crisp at HUD sizes.
+struct OpenCodeLogoView: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(Color(red: 0x13 / 255, green: 0x10 / 255, blue: 0x10 / 255))
+            Rectangle()
+                .fill(.white)
+                .frame(width: 9, height: 11)
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(red: 0x13 / 255, green: 0x10 / 255, blue: 0x10 / 255))
+                    .frame(width: 4.5, height: 4)
+                Rectangle()
+                    .fill(Color(red: 0x5A / 255, green: 0x58 / 255, blue: 0x58 / 255))
+                    .frame(width: 4.5, height: 5)
+            }
+        }
+        .frame(width: 14, height: 14)
     }
 }
 

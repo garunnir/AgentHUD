@@ -26,6 +26,14 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var isScanning = true
     /// Live Codex usage from the server (nil until the first successful fetch).
     @Published private(set) var liveUsage: CodexUsage?
+    /// Live OpenCode Go usage from the Console (nil until Console login succeeds).
+    @Published private(set) var openCodeGoUsage: OpenCodeGoUsage?
+    /// True while the Console usage request is in flight, so the HUD does not look
+    /// empty while a slow login/session request is still being resolved.
+    @Published private(set) var isLoadingOpenCodeGoUsage = false
+    @Published public var openCodeWorkspaceID: String = "" {
+        didSet { UserDefaults.standard.set(openCodeWorkspaceID, forKey: Self.openCodeWorkspaceKey) }
+    }
     /// Set by the `--render=` debug hook: drops the AppKit overlays, which paint a
     /// solid color over the view when it is rendered offscreen instead of in a window.
     public var isPreviewMode = false
@@ -33,12 +41,15 @@ public final class AgentHudViewModel: ObservableObject {
     private var liveUsageFetchedAt: Date?
     private var liveUsageRetryAt: Date?
     private var liveUsageTask: Task<Void, Never>?
+    private var openCodeGoTask: Task<Void, Never>?
+    private var openCodeGoRetryAt: Date?
     /// Backoff after a failed fetch, so a blocked endpoint is not hit every cycle.
     private static let liveUsageFailureRetry: TimeInterval = 60
     /// Warning line default, also used when the stored value is missing.
     private static let defaultWarningPercent: Double = 30
     private static let warningPercentKey = "hud.warningPercent"
     private static let paceMarkerKey = "hud.paceMarker"
+    private static let openCodeWorkspaceKey = "hud.openCodeWorkspaceID"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -73,6 +84,7 @@ public final class AgentHudViewModel: ObservableObject {
         if UserDefaults.standard.object(forKey: Self.paceMarkerKey) != nil {
             self.showPaceMarker = UserDefaults.standard.bool(forKey: Self.paceMarkerKey)
         }
+        self.openCodeWorkspaceID = UserDefaults.standard.string(forKey: Self.openCodeWorkspaceKey) ?? ""
     }
 
     public func start() {
@@ -81,6 +93,36 @@ public final class AgentHudViewModel: ObservableObject {
 
     public func stop() {
         discovery.stop()
+    }
+
+    public func refreshOpenCodeGoUsage() {
+        guard openCodeGoTask == nil else { return }
+        if let retry = openCodeGoRetryAt, Date() < retry { return }
+        isLoadingOpenCodeGoUsage = true
+        openCodeGoTask = Task { [weak self] in
+            defer {
+                self?.openCodeGoTask = nil
+                self?.isLoadingOpenCodeGoUsage = false
+            }
+            guard let self else { return }
+            do {
+                self.openCodeGoUsage = try await OpenCodeGoUsageApi.shared.fetch(
+                    workspaceId: self.openCodeWorkspaceID
+                )
+                self.openCodeGoRetryAt = nil
+            } catch {
+                self.openCodeGoRetryAt = Date().addingTimeInterval(60)
+                print("OpenCode Go usage API: \(error)")
+            }
+        }
+    }
+
+    public func openCodeGoCookiesSaved() {
+        refreshOpenCodeGoUsage()
+    }
+
+    public func clearOpenCodeGoUsage() {
+        openCodeGoUsage = nil
     }
 
     public func toggleMinimized() {
@@ -212,6 +254,10 @@ public final class AgentHudViewModel: ObservableObject {
     /// Codex limits come from the latest session's rate_limits; Claude shows token totals.
     func buildUsageRows(now: Date = Date()) -> [UsageRow] {
         refreshLiveUsageIfNeeded(now: now)
+        if OpenCodeGoUsageApi.shared.hasCookies,
+           openCodeGoUsage == nil || now.timeIntervalSince(openCodeGoUsage!.fetchedAt) >= OpenCodeGoUsageApi.refreshInterval {
+            refreshOpenCodeGoUsage()
+        }
         var rows: [UsageRow] = []
         let loc = Localiz.current
 
@@ -269,6 +315,15 @@ public final class AgentHudViewModel: ObservableObject {
             }
         }
 
+        if let go = openCodeGoUsage {
+            rows.append(codexRow(agent: .openCodeGo, label: "5h", window: go.fiveHour,
+                                 updatedAt: go.fetchedAt, now: now, fromServer: true))
+            rows.append(codexRow(agent: .openCodeGo, label: "week", window: go.week,
+                                 updatedAt: go.fetchedAt, now: now, fromServer: true))
+            rows.append(codexRow(agent: .openCodeGo, label: "month", window: go.month,
+                                 updatedAt: go.fetchedAt, now: now, fromServer: true))
+        }
+
         // Hide the 5h pace marker when weekly usage is already beyond its even pace.
         for index in rows.indices where rows[index].label == "5h" {
             let agent = rows[index].agent
@@ -291,7 +346,7 @@ public final class AgentHudViewModel: ObservableObject {
         let used = window.percentAt(now)
         let left = window.resetsAt.timeIntervalSince(now)
         var text = ""
-        if left > 0 && left <= 8 * 86400 {
+        if left > 0 && left <= 31 * 86400 {
             if left >= 86400 {
                 text = HudTheme.formatPattern(loc.string("Usage.ResetDays"), [left / 86400])
             } else {

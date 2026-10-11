@@ -21,6 +21,8 @@ Notify.ClickToOpen	Click to open the conversation.	클릭하면 대화를 엽니
 Error.ClaudeLinkFailed	Failed to link Claude limits	Claude 한도 연동 실패
 Error.KeySaveFailed	Failed to save key	키 저장 실패
 Usage.Week	Week	주간
+Usage.Month	Month	월간
+Usage.Loading	Loading OpenCode Go usage…	OpenCode Go 사용량을 불러오는 중…
 Usage.NoLimitInfo	No limit info	한도 정보 없음
 Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
