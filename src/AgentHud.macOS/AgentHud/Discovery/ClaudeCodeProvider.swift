@@ -9,11 +9,17 @@ public final class ClaudeCodeProvider: IAgentProvider {
 
     private let sessionsRoot: String
     private let projectsRoot: String
+    private var activeWindow: TimeInterval
     private var transcripts: [String: (length: Int64, modified: Date, info: TranscriptInfo)] = [:]
 
-    public init(home: String) {
+    public init(home: String, activeWindow: TimeInterval = 3600) {
         sessionsRoot = (home as NSString).appendingPathComponent(".claude/sessions")
         projectsRoot = (home as NSString).appendingPathComponent(".claude/projects")
+        self.activeWindow = activeWindow
+    }
+
+    public func setActiveWindow(_ value: TimeInterval) {
+        activeWindow = max(60, value)
     }
 
     public func discover() async throws -> [AgentSession] {
@@ -39,6 +45,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
             let alive = processes.contains(pid)
             let updatedAt = parseDate(json["updatedAt"]) ?? fileModificationDate(path)
             let state = alive ? mapState(json["status"] as? String, activity: updatedAt) : .stopped
+            let recentlyActive = Date().timeIntervalSince(updatedAt) <= activeWindow
 
             if json["entrypoint"] as? String == "claude-vscode" && state == .idle
                 && UUID(uuidString: sessionId) != nil && !hasTranscript(sessionId) { continue }
@@ -76,7 +83,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
                 currentTask: nil,
                 startedAt: parseDate(json["startedAt"]) ?? fileCreationDate(path),
                 lastActivityAt: updatedAt,
-                isActive: alive,
+                isActive: alive && recentlyActive,
                 wakeupAt: wakeupAt,
                 hasBackgroundTasks: hasBackground,
                 parentSessionId: nil,

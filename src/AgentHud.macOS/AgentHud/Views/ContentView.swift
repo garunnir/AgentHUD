@@ -267,7 +267,7 @@ struct SettingsPopover: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(Localiz.current.string("Main.Settings"))
                 .font(.headline)
-            Picker("Codex active window", selection: $viewModel.codexActiveWindowMinutes) {
+            Picker(Localiz.current.string("Settings.ActiveWindow"), selection: $viewModel.activeWindowMinutes) {
                 ForEach(windowChoices, id: \.self) { minutes in
                     Text(minutes >= 60 ? "\(minutes / 60)h" : "\(minutes)m").tag(minutes)
                 }

@@ -7,9 +7,15 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var isMinimized = false
     @Published public var hiddenSessionIds: Set<String> = []
     @Published public var memos: [String: String] = [:]
-    // Codex active window (minutes). Sessions whose last event is within this window are considered active.
-    @Published public var codexActiveWindowMinutes: Int = 60 {
-        didSet { codexProvider.setActiveWindow(TimeInterval(codexActiveWindowMinutes * 60)) }
+    // Shared active window (minutes). Sessions whose last event is within this window are considered active.
+    @Published public var activeWindowMinutes: Int = 60 {
+        didSet {
+            let seconds = TimeInterval(activeWindowMinutes * 60)
+            codexProvider.setActiveWindow(seconds)
+            claudeProvider.setActiveWindow(seconds)
+            openCodeProvider.setActiveWindow(seconds)
+            UserDefaults.standard.set(activeWindowMinutes, forKey: Self.activeWindowKey)
+        }
     }
     // Show waiting states as ? / ! symbols instead of yellow dots (off by default, like Windows).
     @Published public var showWaitingSymbols = false
@@ -54,10 +60,12 @@ public final class AgentHudViewModel: ObservableObject {
     private static let paceMarkerKey = "hud.paceMarker"
     private static let openCodeWorkspaceKey = "hud.openCodeWorkspaceID"
     private static let conversationTargetKey = "hud.conversationTarget"
+    private static let activeWindowKey = "hud.activeWindowMinutes"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
     private let codexProvider: CodexProvider
+    private let claudeProvider: ClaudeCodeProvider
     private let openCodeProvider: OpenCodeProvider
     private var updateTask: Task<Void, Never>?
 
@@ -67,10 +75,12 @@ public final class AgentHudViewModel: ObservableObject {
         let home = NSHomeDirectory()
         let codex = CodexProvider(home: home, activeWindow: TimeInterval(60 * 60))
         self.codexProvider = codex
+        let claude = ClaudeCodeProvider(home: home, activeWindow: TimeInterval(60 * 60))
+        self.claudeProvider = claude
         let openCode = OpenCodeProvider(home: home, activeWindow: TimeInterval(60 * 60))
         self.openCodeProvider = openCode
         let providers: [IAgentProvider] = [
-            ClaudeCodeProvider(home: home),
+            claude,
             codex,
             openCode
         ]
@@ -93,6 +103,9 @@ public final class AgentHudViewModel: ObservableObject {
             self.showPaceMarker = UserDefaults.standard.bool(forKey: Self.paceMarkerKey)
         }
         self.openCodeWorkspaceID = UserDefaults.standard.string(forKey: Self.openCodeWorkspaceKey) ?? ""
+        if let savedWindow = UserDefaults.standard.object(forKey: Self.activeWindowKey) as? Int {
+            self.activeWindowMinutes = max(1, savedWindow)
+        }
         if let raw = UserDefaults.standard.string(forKey: Self.conversationTargetKey),
            let target = ConversationTarget(rawValue: raw) {
             self.conversationTarget = target

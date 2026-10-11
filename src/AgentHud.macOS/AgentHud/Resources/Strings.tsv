@@ -59,6 +59,7 @@ Settings.LanguageMissing	not translated, English	번역 없음, 영어
 Settings.WaitingSymbols	Show waiting states as symbols (? / !)	대기 상태를 기호로 표시 (? / !)
 Settings.ConversationTarget	Open conversations with	대화 열기 앱
 Settings.CodexActive	Codex active window	Codex 활성 유지 시간
+Settings.ActiveWindow	Session active window	세션 활성 유지 시간
 Settings.Minutes	min	분
 Settings.CodexActiveHint	Codex processes can't be detected, so a session counts as active only for this long after its last event. Increase it if sessions disappear while waiting on a question. (1–1440)	Codex는 프로세스를 확인할 수 없어, 마지막 이벤트 후 이 시간 동안만 활성으로 봅니다. 질문 대기 중 사라진다면 늘리세요. (1–1440)
 Settings.WarningLine	Warning line (remaining %)	잔여 경고선 (%)
