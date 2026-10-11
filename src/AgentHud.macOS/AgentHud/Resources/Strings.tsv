@@ -26,6 +26,8 @@ Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
 Usage.ResetHoursMinutes	{0}h {1}m	{0}시간 {1}분
 Usage.PaceTip	Recommended remaining {0:0}% (even pace)	권장 잔량 {0:0}% (균등 소비 기준)
+Usage.UpdatedAgo	{0} ago	{0} 전 갱신
+Usage.RecordedAt	recorded {0}	{0} 기록
 Resume.DefaultPrompt	Please continue the work that was interrupted by the usage limit.	사용량 한도로 중단됐던 작업을 이어서 진행해 주세요.
 Sound.Asterisk	Windows notification (Asterisk)	Windows 알림 (Asterisk)
 Sound.Exclamation	Windows warning (Exclamation)	Windows 경고 (Exclamation)

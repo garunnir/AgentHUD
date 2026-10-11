@@ -187,9 +187,11 @@ public final class AgentHudViewModel: ObservableObject {
                     }
                 }
             if let latest, let primary = latest.primaryLimit {
-                rows.append(codexRow(agent: .codex, label: "5h", window: primary, now: now))
+                rows.append(codexRow(agent: .codex, label: "5h", window: primary,
+                                     updatedAt: latest.limitsUpdatedAt, now: now))
                 if let week = latest.secondaryLimit {
-                    rows.append(codexRow(agent: .codex, label: "week", window: week, now: now))
+                    rows.append(codexRow(agent: .codex, label: "week", window: week,
+                                         updatedAt: latest.limitsUpdatedAt, now: now))
                 }
             } else {
                 rows.append(UsageRow(
@@ -211,7 +213,8 @@ public final class AgentHudViewModel: ObservableObject {
         return rows
     }
 
-    private func codexRow(agent: AgentType, label: String, window: LimitWindow, now: Date) -> UsageRow {
+    private func codexRow(agent: AgentType, label: String, window: LimitWindow,
+                          updatedAt: Date? = nil, now: Date) -> UsageRow {
         let loc = Localiz.current
         let used = window.percentAt(now)
         let left = window.resetsAt.timeIntervalSince(now)
@@ -230,6 +233,7 @@ public final class AgentHudViewModel: ObservableObject {
         let fallbackMinutes = label == "5h" ? 5 * 60 : 7 * 24 * 60
         let length = TimeInterval(window.windowMinutes ?? fallbackMinutes) * 60
         let pace: Double? = (left <= 0 || left > length) ? nil : left / length * 100
-        return UsageRow(id: "\(agent.rawValue)-\(label)", agent: agent, label: label, usedPercent: used, text: text, pacePercent: pace)
+        return UsageRow(id: "\(agent.rawValue)-\(label)", agent: agent, label: label,
+                        usedPercent: used, text: text, pacePercent: pace, updatedAt: updatedAt)
     }
 }

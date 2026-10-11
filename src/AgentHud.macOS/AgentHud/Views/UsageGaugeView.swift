@@ -8,9 +8,30 @@ struct UsageRow: Identifiable, Equatable {
     let usedPercent: Double?   // nil = no bar, text only
     var text: String           // reset time or token summary
     var pacePercent: Double?
+    /// When this snapshot was recorded. Limits come from local session logs, so the
+    /// value can be minutes old; the HUD says so instead of implying it is live.
+    var updatedAt: Date?
+    private static let staleAfter: TimeInterval = 300
 
     var displayLabel: String { label == "week" ? Localiz.current.string("Usage.Week") : label }
     var remainingPercent: Double { 100 - (usedPercent ?? 0) }
+    /// True once the snapshot is old enough that the real usage may have moved on.
+    var isStale: Bool {
+        guard let updatedAt else { return false }
+        return Date().timeIntervalSince(updatedAt) > Self.staleAfter
+    }
+    /// "3h 0m" when fresh, "3h 0m · 1h 4m ago" once the snapshot is old.
+    var displayText: String {
+        guard let updatedAt, isStale, usedPercent != nil else { return text }
+        return text.isEmpty ? ageText(now: Date()) : "\(text) · \(ageText(now: Date()))"
+    }
+    private func ageText(now: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(updatedAt ?? now))
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        let value = hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+        return HudTheme.formatPattern(Localiz.current.string("Usage.UpdatedAgo"), [value])
+    }
 }
 
 struct UsageGaugeView: View {
@@ -33,7 +54,7 @@ struct UsageGaugeView: View {
             } else {
                 Spacer(minLength: 4)
             }
-            Text(row.text)
+            Text(row.displayText)
                 .font(.system(size: 11))
                 .foregroundStyle(HudTheme.secondary)
                 .lineLimit(1)
@@ -60,16 +81,26 @@ struct UsageBarView: View {
                         .offset(x: min(max(geo.size.width * pace / 100 - 1, 0), max(0, geo.size.width - 2)))
                         .help(paceTip(pace))
                 }
-                Text("\(Int(row.remainingPercent.rounded()))%")
+                                Text("\(Int(row.remainingPercent.rounded()))%")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
             }
+            .help(barTip)
         }
         .frame(height: 16)
     }
 
     private func paceTip(_ pace: Double) -> String {
         HudTheme.formatPattern(Localiz.current.string("Usage.PaceTip"), [pace])
+    }
+
+    private var barTip: String {
+        var parts = ["\(Int(row.remainingPercent.rounded()))%"]
+        if !row.text.isEmpty { parts.append(row.text) }
+        if let updated = row.updatedAt {
+            parts.append(HudTheme.formatPattern(Localiz.current.string("Usage.RecordedAt"), [updated.formatted(date: .omitted, time: .shortened)]))
+        }
+        return parts.joined(separator: " · ")
     }
 }
