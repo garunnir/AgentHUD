@@ -54,6 +54,7 @@ public final class AgentHudViewModel: ObservableObject {
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
     private let codexProvider: CodexProvider
+    private let openCodeProvider: OpenCodeProvider
     private var updateTask: Task<Void, Never>?
 
     public init() {
@@ -62,9 +63,12 @@ public final class AgentHudViewModel: ObservableObject {
         let home = NSHomeDirectory()
         let codex = CodexProvider(home: home, activeWindow: TimeInterval(60 * 60))
         self.codexProvider = codex
+        let openCode = OpenCodeProvider(home: home, activeWindow: TimeInterval(60 * 60))
+        self.openCodeProvider = openCode
         let providers: [IAgentProvider] = [
             ClaudeCodeProvider(home: home),
-            codex
+            codex,
+            openCode
         ]
         self.discovery = AgentDiscoveryService(providers: providers, registry: registry)
 

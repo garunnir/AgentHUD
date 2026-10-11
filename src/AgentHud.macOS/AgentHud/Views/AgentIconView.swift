@@ -5,7 +5,7 @@ struct AgentIconView: View {
     let type: AgentType
 
     var body: some View {
-        if type == .openCodeGo {
+        if type == .openCode || type == .openCodeGo {
             OpenCodeLogoView()
         } else {
             ScaledArtworkShape(path: type == .claudeCode ? AgentArtwork.claude() : AgentArtwork.codex())
