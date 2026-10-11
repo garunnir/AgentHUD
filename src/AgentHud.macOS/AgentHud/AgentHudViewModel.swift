@@ -61,8 +61,76 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     public func openProject(_ session: AgentSession) {
-        guard let path = session.projectPath else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        // Mirrors the Windows OpenInVsCode: focus the project window in VS Code first,
+        // then hand the conversation URI over so the extension opens that conversation.
+        guard let path = session.worktreePath ?? session.projectPath,
+              FileManager.default.fileExists(atPath: path) else { return }
+        openInVSCode(path: path)
+        guard let uri = conversationURI(for: session) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            if let url = URL(string: uri) { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    /// vscode:// URI that opens the conversation tab of the given session.
+    private func conversationURI(for session: AgentSession) -> String? {
+        guard let separator = session.id.firstIndex(of: ":") else { return nil }
+        let raw = String(session.id[session.id.index(after: separator)...])
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let escaped = raw.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return session.agentType == .claudeCode
+            ? "vscode://anthropic.claude-code/open?session=\(escaped)"
+            : "vscode://openai.chatgpt/local/\(escaped)"
+    }
+
+    /// Opens the project in VS Code. The `code` CLI is preferred so an existing window
+    /// for the project is focused; a GUI app has a minimal PATH, so the usual install
+    /// locations are checked before falling back to the app bundle.
+    private func openInVSCode(path: String) {
+        if let cli = locateCodeCLI() {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: cli)
+            process.arguments = [path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            if (try? process.run()) != nil { return }
+        }
+        let bundle = URL(fileURLWithPath: "/Applications/Visual Studio Code.app")
+        if FileManager.default.fileExists(atPath: bundle.path) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: bundle, configuration: configuration)
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    private func locateCodeCLI() -> String? {
+        let candidates = [
+            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+            NSHomeDirectory() + "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        ]
+        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return found
+        }
+        // Homebrew cask / manual installs expose `code` somewhere on the user's PATH,
+        // which a GUI app does not inherit, so ask the login shell instead.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v code"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return path.isEmpty ? nil : path
+        } catch {
+            return nil
+        }
     }
 
     public func setMemo(_ memo: String, for projectPath: String) {
