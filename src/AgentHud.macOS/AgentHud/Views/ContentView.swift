@@ -94,12 +94,24 @@ public struct ContentView: View {
 
     private var minimizedContent: some View {
         HStack(spacing: MiniBarOverlay.dotSpacing) {
-            ForEach(visibleSessions) { session in
-                StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+            if visibleSessions.isEmpty {
+                // Keep a usable restore target when the last tracked session ends.
+                // This is intentionally hollow/dim: it does not pretend an agent is
+                // active, but prevents the minimized HUD from collapsing to a tiny
+                // unclickable sliver.
+                Circle()
+                    .stroke(HudTheme.dim.opacity(0.7), lineWidth: 1.5)
+                    .frame(width: 10, height: 10)
+                    .help("No active sessions — double-click to restore")
                     .allowsHitTesting(false)
+            } else {
+                ForEach(visibleSessions) { session in
+                    StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+                        .allowsHitTesting(false)
+                }
             }
         }
-        .frame(minWidth: 6)
+        .frame(minWidth: visibleSessions.isEmpty ? 20 : 6, minHeight: 18)
         // Native overlay: drag the bar to move it, double-click restores, and each
         // dot shows a native tooltip with its project and status.
         .overlay(
@@ -108,7 +120,9 @@ public struct ContentView: View {
                     Color.clear
                 } else {
                     MiniBarOverlay(
-                        tooltips: visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
+                        tooltips: visibleSessions.isEmpty
+                            ? ["No active sessions — double-click to restore"]
+                            : visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
                         onDoubleClick: { viewModel.toggleMinimized() }
                     )
                 }
