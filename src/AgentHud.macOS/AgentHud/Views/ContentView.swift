@@ -278,6 +278,13 @@ struct SettingsPopover: View {
                     .font(.system(size: 12))
             }
             .toggleStyle(.checkbox)
+            Picker(Localiz.current.string("Settings.ConversationTarget"),
+                   selection: $viewModel.conversationTarget) {
+                ForEach(ConversationTarget.allCases) { target in
+                    Text(target.displayName).tag(target)
+                }
+            }
+            .frame(width: 220)
             VStack(alignment: .leading, spacing: 4) {
                 Picker(selection: $viewModel.warningPercent) {
                     ForEach(warningChoices, id: \.self) { percent in

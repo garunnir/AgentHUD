@@ -21,6 +21,9 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var showPaceMarker: Bool = true {
         didSet { UserDefaults.standard.set(showPaceMarker, forKey: Self.paceMarkerKey) }
     }
+    @Published public var conversationTarget: ConversationTarget = .visualStudioCode {
+        didSet { UserDefaults.standard.set(conversationTarget.rawValue, forKey: Self.conversationTargetKey) }
+    }
     /// True until the first discovery pass finishes, so the HUD can show a spinner
     /// instead of claiming there are no sessions.
     @Published public var isScanning = true
@@ -50,6 +53,7 @@ public final class AgentHudViewModel: ObservableObject {
     private static let warningPercentKey = "hud.warningPercent"
     private static let paceMarkerKey = "hud.paceMarker"
     private static let openCodeWorkspaceKey = "hud.openCodeWorkspaceID"
+    private static let conversationTargetKey = "hud.conversationTarget"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -89,6 +93,10 @@ public final class AgentHudViewModel: ObservableObject {
             self.showPaceMarker = UserDefaults.standard.bool(forKey: Self.paceMarkerKey)
         }
         self.openCodeWorkspaceID = UserDefaults.standard.string(forKey: Self.openCodeWorkspaceKey) ?? ""
+        if let raw = UserDefaults.standard.string(forKey: Self.conversationTargetKey),
+           let target = ConversationTarget(rawValue: raw) {
+            self.conversationTarget = target
+        }
     }
 
     public func start() {
@@ -146,19 +154,34 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     public func openProject(_ session: AgentSession) {
-        // Mirrors the Windows OpenInVsCode: focus the project window in VS Code first,
-        // then hand the conversation URI over so the extension opens that conversation.
         guard let path = session.worktreePath ?? session.projectPath,
               FileManager.default.fileExists(atPath: path) else { return }
-        openInVSCode(path: path)
-        guard let uri = conversationURI(for: session) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            if let url = URL(string: uri) { NSWorkspace.shared.open(url) }
+        switch conversationTarget {
+        case .visualStudioCode:
+            // Focus the project first, then hand the conversation URI to the extension.
+            openInVSCode(path: path)
+            guard let uri = conversationURI(for: session) else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                if let url = URL(string: uri) { NSWorkspace.shared.open(url) }
+            }
+        case .chatGPTDesktop:
+            if session.agentType == .codex, let uri = chatGPTConversationURI(for: session) {
+                NSWorkspace.shared.open(URL(string: uri)!)
+            } else {
+                openInDesktopApp(path: path, bundleIdentifiers: ["com.openai.codex"], fallback: "/Applications/ChatGPT.app")
+            }
+        case .openCodeDesktop:
+            openInDesktopApp(path: path, bundleIdentifiers: ["ai.opencode.desktop"], fallback: "/Applications/OpenCode.app")
+        case .claudeDesktop:
+            openInDesktopApp(path: path, bundleIdentifiers: ["com.anthropic.claudefordesktop"], fallback: "/Applications/Claude.app")
         }
     }
 
     /// vscode:// URI that opens the conversation tab of the given session.
     private func conversationURI(for session: AgentSession) -> String? {
+        // There is no confirmed OpenCode VS Code URI scheme yet. Still open the
+        // project in VS Code, but do not send its session ID to the ChatGPT route.
+        if session.agentType == .openCode { return nil }
         guard let separator = session.id.firstIndex(of: ":") else { return nil }
         let raw = String(session.id[session.id.index(after: separator)...])
         var allowed = CharacterSet.alphanumerics
@@ -167,6 +190,30 @@ public final class AgentHudViewModel: ObservableObject {
         return session.agentType == .claudeCode
             ? "vscode://anthropic.claude-code/open?session=\(escaped)"
             : "vscode://openai.chatgpt/local/\(escaped)"
+    }
+
+    private func chatGPTConversationURI(for session: AgentSession) -> String? {
+        guard let separator = session.id.firstIndex(of: ":") else { return nil }
+        let raw = String(session.id[session.id.index(after: separator)...])
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let escaped = raw.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return "codex://threads/\(escaped)"
+    }
+
+    private func openInDesktopApp(path: String, bundleIdentifiers: [String], fallback: String) {
+        let appURL = bundleIdentifiers
+            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+            .first ?? URL(fileURLWithPath: fallback)
+        guard FileManager.default.fileExists(atPath: appURL.path) else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open([URL(fileURLWithPath: path)],
+                                withApplicationAt: appURL,
+                                configuration: configuration)
     }
 
     /// Opens the project in VS Code. The `code` CLI is preferred so an existing window
