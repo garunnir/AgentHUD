@@ -9,6 +9,24 @@ struct AgentHudApp: App {
     init() {
         // Disable stdout buffering so logs appear immediately when redirected to a file.
         setbuf(stdout, nil)
+
+        // Debug hook: `AgentHud --usage-selftest` prints the live usage mapping and exits
+        // before any window is created. Useful if the endpoint ever changes.
+                if CommandLine.arguments.contains("--usage-selftest") {
+            do {
+                let usage = try CodexUsageApi.shared.fetchUsageSync()
+                func describe(_ window: LimitWindow?) -> String {
+                    guard let window else { return "nil" }
+                    return "\(Int(window.usedPercent))% used, resets \(window.resetsAt)"
+                }
+                print("live usage: primary=\(describe(usage.primary))")
+                print("             secondary=\(describe(usage.secondary))")
+                print("             plan=\(usage.planType ?? "?") limitReached=\(usage.limitReached)")
+            } catch {
+                print("usage fetch failed: \(error)")
+            }
+            exit(0)
+        }
     }
 
     var body: some Scene {

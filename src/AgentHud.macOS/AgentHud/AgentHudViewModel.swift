@@ -16,6 +16,14 @@ public final class AgentHudViewModel: ObservableObject {
     /// True until the first discovery pass finishes, so the HUD can show a spinner
     /// instead of claiming there are no sessions.
     @Published public var isScanning = true
+    /// Live Codex usage from the server (nil until the first successful fetch).
+    @Published private(set) var liveUsage: CodexUsage?
+
+    private var liveUsageFetchedAt: Date?
+    private var liveUsageRetryAt: Date?
+    private var liveUsageTask: Task<Void, Never>?
+    /// Backoff after a failed fetch, so a blocked endpoint is not hit every cycle.
+    private static let liveUsageFailureRetry: TimeInterval = 60
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -148,11 +156,38 @@ public final class AgentHudViewModel: ObservableObject {
         memos[projectPath]
     }
 
+    /// Fetches live usage from the server at most every 5 minutes (failures retry after
+    /// 1 minute). Failures are swallowed so the local-log fallback keeps the gauge working.
+    private func refreshLiveUsageIfNeeded(now: Date) {
+        guard liveUsageTask == nil else { return }
+        if let next = liveUsageRetryAt {
+            if now < next { return }
+        } else if let fetched = liveUsageFetchedAt,
+                  now.timeIntervalSince(fetched) < CodexUsageApi.refreshInterval {
+            return
+        }
+        liveUsageTask = Task { [weak self] in
+            defer { self?.liveUsageTask = nil }
+            guard let self else { return }
+            do {
+                let usage = try await CodexUsageApi.shared.fetchUsage()
+                self.liveUsageFetchedAt = Date()
+                self.liveUsageRetryAt = nil
+                self.liveUsage = usage
+            } catch {
+                // Keep the previous value/fallback; back off before retrying.
+                print("Codex usage API: \(error)")
+                self.liveUsageRetryAt = Date().addingTimeInterval(Self.liveUsageFailureRetry)
+            }
+        }
+    }
+
     // MARK: - Usage gauges
 
     /// Builds the bottom usage rows, mirroring the Windows UpdateUsage logic:
     /// Codex limits come from the latest session's rate_limits; Claude shows token totals.
     func buildUsageRows(now: Date = Date()) -> [UsageRow] {
+        refreshLiveUsageIfNeeded(now: now)
         var rows: [UsageRow] = []
         let loc = Localiz.current
 
@@ -172,7 +207,16 @@ public final class AgentHudViewModel: ObservableObject {
             ))
         }
 
-        if sessions.contains(where: { $0.agentType == .codex }) {
+        // Live server data wins; local logs only fill in when the API is unavailable.
+        let live = liveUsage
+        if live?.primary != nil {
+            rows.append(codexRow(agent: .codex, label: "5h", window: live!.primary!,
+                                 updatedAt: liveUsageFetchedAt, now: now))
+            if let week = live?.secondary {
+                rows.append(codexRow(agent: .codex, label: "week", window: week,
+                                     updatedAt: liveUsageFetchedAt, now: now))
+            }
+        } else if sessions.contains(where: { $0.agentType == .codex }) {
             // Limits are account-wide, so use the session with the freshest snapshot.
             // Picking the most recently *active* session can show stale numbers when
             // that session's last token_count predates another session's.
