@@ -14,6 +14,8 @@ Agent HUD에 관심을 가져 주셔서 감사합니다. 버그 제보, 기능 �
 - **Windows PowerShell 5.1** 이상
 - 권장: VS Code + C# Dev Kit (`F5`로 디버그, 자세한 내용은 [README](README.md#개발-환경-vs-code에서-빌드디버그))
 
+macOS 앱([src/AgentHud.macOS/](src/AgentHud.macOS/), Swift)은 [@hail-kang](https://github.com/hail-kang)님이 기여·관리합니다. macOS 관련 문의, 버그 제보, PR은 이슈나 PR에서 @hail-kang 님을 멘션해 주세요. 빌드는 Mac에서 `./scripts/build_app.sh`로 합니다.
+
 ## 빌드와 검사
 
 PR을 올리기 전에 로컬에서 CI와 같은 검사를 통과하는지 확인해 주세요.

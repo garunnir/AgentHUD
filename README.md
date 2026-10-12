@@ -146,6 +146,19 @@ With auto-resume on, 1 minute after the reset the HUD runs the following command
 - Limits that reset more than 30 minutes ago (for example, while the HUD was off) and subagent sessions are not resumed. If a resume hits the limit again, it tries once more at the new reset time.
 - Runs are logged to `%LOCALAPPDATA%\AgentHud\auto-resume.log`.
 
+## macOS
+
+A native macOS port (SwiftUI, macOS 14 or later) lives in [src/AgentHud.macOS/](src/AgentHud.macOS/). It was contributed and is maintained by [@hail-kang](https://github.com/hail-kang). The rest of this README describes the Windows app, so some features and settings differ on macOS.
+
+There is no prebuilt macOS release yet. Build the app bundle from source on a Mac:
+
+```bash
+./scripts/build_app.sh
+open src/AgentHud.macOS/dist/AgentHud.app
+```
+
+**For macOS questions and bug reports, please [open an issue](https://github.com/garunnir/AgentHUD/issues) and mention [@hail-kang](https://github.com/hail-kang).** The repository owner develops and tests on Windows only and can't reproduce macOS problems.
+
 ## Contributing
 
 Bug reports and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
