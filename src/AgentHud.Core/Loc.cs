@@ -1,7 +1,5 @@
 using System.ComponentModel;
 using System.Globalization;
-using System.Windows.Data;
-using System.Windows.Markup;
 
 namespace AgentHud;
 
@@ -55,7 +53,7 @@ public sealed class Loc : INotifyPropertyChanged
             if (_language == value) return;
             _language = value;
             PropertyChanged?.Invoke(this, new(nameof(Language)));
-            PropertyChanged?.Invoke(this, new(Binding.IndexerName));
+            PropertyChanged?.Invoke(this, new("Item[]"));
         }
     }
     private string Effective => _language.Length > 0 ? _language : _systemLanguage ?? English;
@@ -93,15 +91,4 @@ public sealed class Loc : INotifyPropertyChanged
         return (codes.Select(c => new LanguageOption(c, names?.GetValueOrDefault(c) ?? c)).ToArray(), table);
     }
     private static string Unescape(string s) => s.Contains('\\') ? s.Replace("\\\\", "\0").Replace("\\n", "\n").Replace("\\t", "\t").Replace("\0", "\\") : s;
-}
-
-/// <summary>XAML용: Text="{local:Tr Settings.Title}" — 언어가 바뀌면 자동 갱신</summary>
-[MarkupExtensionReturnType(typeof(object))]
-public sealed class TrExtension : MarkupExtension
-{
-    public TrExtension() { }
-    public TrExtension(string key) => Key = key;
-    [ConstructorArgument("key")] public string Key { get; set; } = "";
-    public override object ProvideValue(IServiceProvider serviceProvider) =>
-        new Binding($"[{Key}]") { Source = Loc.Instance, Mode = BindingMode.OneWay }.ProvideValue(serviceProvider);
 }

@@ -9,6 +9,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentHud.Tests", "tests\AgentHud.Tests\AgentHud.Tests.csproj", "{D3106B47-1854-47A1-A8CF-98BC505922D0}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2F6ABD76-4455-475D-8C59-377AD338787E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentHud.Core", "src\AgentHud.Core\AgentHud.Core.csproj", "{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,11 +47,24 @@ Global
 		{D3106B47-1854-47A1-A8CF-98BC505922D0}.Release|x64.Build.0 = Release|Any CPU
 		{D3106B47-1854-47A1-A8CF-98BC505922D0}.Release|x86.ActiveCfg = Release|Any CPU
 		{D3106B47-1854-47A1-A8CF-98BC505922D0}.Release|x86.Build.0 = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|x64.Build.0 = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Debug|x86.Build.0 = Debug|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|x64.ActiveCfg = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|x64.Build.0 = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|x86.ActiveCfg = Release|Any CPU
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{D3106B47-1854-47A1-A8CF-98BC505922D0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{D8FE0BDD-4086-4B04-B37C-3DCD05A18120} = {2F6ABD76-4455-475D-8C59-377AD338787E}
 	EndGlobalSection
 EndGlobal

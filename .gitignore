@@ -2,3 +2,6 @@ bin/
 obj/
 .vs/
 *.user
+.build/
+dist/
+*.app/
