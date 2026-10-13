@@ -220,6 +220,19 @@ try
     Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "task-notification clears finished background tasks");
     await File.AppendAllTextAsync(bgTranscript, BgLine("user", new[] { new { type = "tool_result", tool_use_id = "b3", content = "Command running in background with ID: bash2" } }, sidechain: true));
     Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "sidechain background tasks are ignored");
+    const string queuedNotice = "<task-notification>\n<task-id>bash3</task-id>\n<status>completed</status>\n</task-notification>";
+    string BgStart(string callId, string taskId) =>
+        BgLine("assistant", new object[] { new { type = "tool_use", id = callId, name = "Bash", input = new { command = "sleep 75", run_in_background = true } } })
+        + BgLine("user", new[] { new { type = "tool_result", tool_use_id = callId, content = $"Command running in background with ID: {taskId}. Output is being written to: x" } });
+    await File.AppendAllTextAsync(bgTranscript, BgStart("b4", "bash3"));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "second background Bash is tracked");
+    await File.AppendAllTextAsync(bgTranscript, System.Text.Json.JsonSerializer.Serialize(new {
+        type = "queue-operation", operation = "enqueue", sessionId = bgId, content = queuedNotice }) + "\n");
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "queued mid-turn task-notification clears the background task");
+    await File.AppendAllTextAsync(bgTranscript, BgStart("b5", "bash4") + System.Text.Json.JsonSerializer.Serialize(new {
+        type = "attachment", sessionId = bgId, isSidechain = false,
+        attachment = new { type = "queued_command", prompt = queuedNotice.Replace("bash3", "bash4") } }) + "\n");
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "queued_command attachment clears the background task");
     var bgRegistry = new AgentSessionRegistry(new TestTimeProvider());
     bgRegistry.Replace([a]);
     bgRegistry.Replace([a with { State = AgentState.Idle, HasBackgroundTasks = true }]);

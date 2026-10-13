@@ -158,6 +158,10 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                         if (!sidechain && type.GetString() == "user" && root.TryGetProperty("message", out var userMessage)
                             && userMessage.ValueKind == JsonValueKind.Object && userMessage.TryGetProperty("content", out var userContent))
                             TrackBackground(background, backgroundCalls, root, userContent);
+                        // A notification arriving mid-turn is queued and logged without a user message.
+                        if (type.GetString() == "queue-operation") FinishTasks(background, GetString(root, "content"));
+                        else if (!sidechain && type.GetString() == "attachment" && root.TryGetProperty("attachment", out var attachment))
+                            FinishTasks(background, GetString(attachment, "prompt"));
                         if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
                             && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
                         {
@@ -209,15 +213,16 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             && input.TryGetProperty("run_in_background", out var flag) && flag.ValueKind == JsonValueKind.True,
         _ => false
     };
+    private static void FinishTasks(Dictionary<string, DateTime> tasks, string? text)
+    {
+        if (text is null || !text.Contains("<task-notification>", StringComparison.Ordinal)) return;
+        foreach (Match done in TaskFinished.Matches(text)) tasks.Remove(done.Groups[1].Value);
+    }
     private static void TrackBackground(Dictionary<string, DateTime> tasks, HashSet<string> calls, JsonElement root, JsonElement content)
     {
         var at = GetString(root, "timestamp") is { } stamp && DateTime.TryParse(stamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
             ? parsed.ToUniversalTime() : DateTime.UtcNow;
-        void Finished(string? text)
-        {
-            if (text is null || !text.Contains("<task-notification>", StringComparison.Ordinal)) return;
-            foreach (Match done in TaskFinished.Matches(text)) tasks.Remove(done.Groups[1].Value);
-        }
+        void Finished(string? text) => FinishTasks(tasks, text);
         if (content.ValueKind == JsonValueKind.String) { Finished(content.GetString()); return; }
         if (content.ValueKind != JsonValueKind.Array) return;
         foreach (var block in content.EnumerateArray())
