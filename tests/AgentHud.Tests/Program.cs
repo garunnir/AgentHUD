@@ -605,6 +605,51 @@ try
             """);
         var v2 = (await openProvider.DiscoverAsync(CancellationToken.None)).Single();
         Assert(v2.SessionTitle == "V2 conversation" && v2.State == AgentState.Idle, "OpenCode prefers V2 and does not interpret legacy messages as V2 state");
+        // OpenCode v2.0.30 keeps the turn in session_message; the session row alone cannot show progress.
+        await Execute("""
+            CREATE TABLE session_message(id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+            UPDATE session_v2 SET time_updated=$now;
+            INSERT INTO session_message VALUES ('msg_v2', 'ses_live', 'assistant', 1, $now, $now,
+                '{"content":[{"type":"tool","name":"shell","state":{"status":"running"}}]}');
+            """);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+            "OpenCode V2 running turn is working");
+        await Execute("""
+            UPDATE session_message SET data='{"content":[{"type":"tool","name":"question","state":{"status":"running"}}]}' WHERE id='msg_v2';
+            """);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.WaitingForInput,
+            "OpenCode V2 running question waits for input");
+        await Execute("""
+            UPDATE session_message SET data='{"content":[{"type":"tool","name":"shell","state":{"status":"completed"}}],"finish":"stop"}' WHERE id='msg_v2';
+            """);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Completed,
+            "OpenCode V2 final response completes turn");
+        await Execute("""
+            UPDATE session_message SET data='{"content":[{"type":"tool","name":"shell","state":{"status":"completed"}}]}' WHERE id='msg_v2';
+            INSERT INTO session_message VALUES ('msg_v2_idle', 'ses_live', 'idle', 2, $now, $now, '{"outcome":"succeeded"}');
+            """);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Completed,
+            "OpenCode V2 idle message completes turn");
+        await Execute("""UPDATE session_message SET data='{"outcome":"interrupted"}' WHERE id='msg_v2_idle';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Stopped,
+            "OpenCode V2 interrupted turn stops");
+        await Execute("""UPDATE session_message SET data='{"outcome":"failed"}' WHERE id='msg_v2_idle';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Error,
+            "OpenCode V2 failed turn is an error");
+        await Execute("""UPDATE session_message SET data='{"error":{"name":"MessageAbortedError"}}', type='assistant' WHERE id='msg_v2_idle';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Stopped,
+            "OpenCode V2 aborted assistant message stops turn");
+        await Execute("""UPDATE session_message SET data='{broken' WHERE id='msg_v2_idle';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+            "malformed OpenCode V2 message is isolated");
+        // 실행 중인 도구가 있으면 오래 걸려도 작업 중이다. 그 밖의 미완료 턴은 멈춘 것으로 본다
+        await Execute("""UPDATE session_message SET data='{"content":[{"type":"tool","name":"shell","state":{"status":"running"}}]}' WHERE id='msg_v2_idle';""");
+        openClock.Now = openClock.Now.AddMinutes(10);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Working,
+            "OpenCode V2 long running tool stays working");
+        await Execute("""UPDATE session_message SET data='{"content":[{"type":"text","text":"hi"}]}' WHERE id='msg_v2_idle';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single().State == AgentState.Idle,
+            "OpenCode V2 stale unfinished turn is not working forever");
         Assert(new AgentHud.AutoResumer(openHome, openHome).CreateStartInfo(v2 with { Id = "opencode:" + Guid.NewGuid(), ProjectPath = openHome }) is null,
             "OpenCode never uses the Codex resume command");
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
