@@ -70,7 +70,7 @@ jobs:
           codesign --verify --deep --strict "$app"
           expected_arch='${{ matrix.arch }}'
           if [ "$expected_arch" = x64 ]; then expected_arch=x86_64; fi
-          lipo -verify_arch "$expected_arch" "$app/Contents/MacOS/AgentHud"
+          lipo "$app/Contents/MacOS/AgentHud" -verify_arch "$expected_arch"
 
       - name: Archive app
         run: |
