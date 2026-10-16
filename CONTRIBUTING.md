@@ -12,9 +12,11 @@ Agent HUD에 관심을 가져 주셔서 감사합니다. 버그 제보, 기능 �
 - **Windows 10/11** (WPF 앱이므로 Windows에서만 빌드·실행됩니다)
 - **.NET 9 SDK**
 - **Windows PowerShell 5.1** 이상
-- 권장: VS Code + C# Dev Kit (`F5`로 디버그, 자세한 내용은 [README](README.md#개발-환경-vs-code에서-빌드디버그))
+- 권장: VS Code + C# Dev Kit. 함께 설치되는 C# 확장이 `coreclr` 디버거를 제공합니다. 저장소를 열고 `F5`로 **Agent HUD (Debug)** 구성을 실행할 수 있습니다.
 
 macOS 앱([src/AgentHud.macOS/](src/AgentHud.macOS/), Swift)은 [@hail-kang](https://github.com/hail-kang)님이 기여·관리합니다. macOS 관련 문의, 버그 제보, PR은 이슈나 PR에서 @hail-kang 님을 멘션해 주세요. 빌드는 Mac에서 `./scripts/build_app.sh`로 합니다.
+
+세션 탐색, 상태 판정, 사용량, 자동 재개 등 내부 구현은 [docs/architecture.md](docs/architecture.md)를 참고하세요.
 
 ## 빌드와 검사
 
@@ -25,6 +27,8 @@ PR을 올리기 전에 로컬에서 CI와 같은 검사를 통과하는지 확�
 dotnet build AgentHud.sln -c Release
 dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj -c Release
 ```
+
+VS Code에서 `Ctrl+Shift+B`는 Debug build를 실행하고 **Tasks: Run Test Task**는 registry 검사를 실행합니다.
 
 GitHub Actions의 **Build** 워크플로가 PR마다 같은 단계를 실행합니다. 처음 기여하는 경우 관리자가 워크플로 실행을 승인한 뒤에 돌아갑니다.
 

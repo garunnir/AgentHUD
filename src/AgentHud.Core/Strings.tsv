@@ -75,3 +75,19 @@ Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows onl
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간
 Settings.BudgetHint	Claude's real limits aren't known locally, so the sum of input + output + cache-creation tokens is compared against this budget. Codex uses the real limits reported by the server.	Claude의 실제 한도는 로컬에서 알 수 없어, 입력+출력+캐시 생성 토큰 합계를 이 예산과 비교해 표시합니다. Codex는 서버가 알려 준 실제 한도를 씁니다.
+Usage.Month	Month	월간
+Go.Title	OpenCode Go usage (Console, unofficial)	OpenCode Go 사용량 (Console, 비공식)
+Go.Workspace	Workspace ID	Workspace ID
+Go.Login	Login	로그인
+Go.Refresh	Refresh	새로고침
+Go.Logout	Logout	로그아웃
+Go.LoginTitle	Sign in to OpenCode Console	OpenCode Console 로그인
+Go.LoginHint	After signing in, click Save to store this session securely.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다.
+Go.Hint	Copy the workspace ID from your Console URL (wrk_...). Log in, then click Save. Session cookies are encrypted for this Windows user; usage refreshes every 5 minutes. Go subscriptions only, not other providers.	Console URL의 workspace ID(wrk_...)를 입력하고 로그인 후 저장을 누르세요. 쿠키는 Windows 현재 사용자용으로 암호화하며 5분마다 조회합니다. Go 구독만 지원합니다.
+Go.NotConfigured	Console login not configured	Console 로그인 미설정
+Go.WorkspaceRequired	Enter a workspace ID	Workspace ID를 입력하세요
+Go.WorkspaceInvalid	Enter the workspace ID, not the full URL	전체 URL 대신 workspace ID를 입력하세요
+Go.LoginRequired	Log in again and check the workspace ID	다시 로그인하고 workspace ID를 확인하세요
+Go.HttpError	Go usage request failed (HTTP {0})	Go 사용량 조회 실패 (HTTP {0})
+Go.BadResponse	Go usage unavailable: no subscription or unsupported response	Go 사용량 없음: 구독 또는 응답 형식을 확인하세요
+Go.LogoutFailed	Could not remove the saved Console session	저장된 Console 세션을 삭제하지 못했습니다

@@ -60,6 +60,7 @@ public sealed class AutoResumer
 
     public ProcessStartInfo? CreateStartInfo(AgentSession session)
     {
+        if (session.AgentType == AgentType.OpenCode) return null;
         var separator = session.Id.IndexOf(':');
         // 명령줄에 들어가는 값은 GUID 형식 세션 ID와 고정 옵션뿐
         if (separator < 0 || !Guid.TryParse(session.Id[(separator + 1)..], out var guid)) return null;

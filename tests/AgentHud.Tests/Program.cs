@@ -316,6 +316,54 @@ try
     await AppendEvent("user_message");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(live.State == AgentState.Working, "user message clears inferred async wait");
+    foreach (var approval in new object[] {
+        new { type = "function_call", name = "exec_command", call_id = "approval", arguments = "{\"sandbox_permissions\":\"require_escalated\"}" },
+        new { type = "custom_tool_call", name = "exec", call_id = "approval", input = "text(await tools.exec_command({cmd:\"Get-Location\",sandbox_permissions:\"require_escalated\"}));" },
+        new { type = "custom_tool_call", name = "functions.exec", call_id = "approval", input = "await tools.exec_command({sandbox_permissions: \"require_escalated\"});" }
+    })
+    {
+        await AppendResponse(approval);
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForApproval, "escalated command waits for approval");
+        await AppendResponse(new { type = "reasoning" });
+        live = (await new CodexProvider(testHome).DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForApproval, "approval survives reasoning and provider restart");
+        await AppendResponse(new { type = "function_call_output", call_id = "unrelated", output = "done" });
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.WaitingForApproval, "unrelated output keeps approval pending");
+        await AppendResponse(new { type = "function_call_output", call_id = "approval", output = "rejected by user" });
+        live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+        Assert(live.State == AgentState.Working, "approval result clears wait");
+    }
+    // Code-mode exec may yield before the user approves; only its cell's final result ends the wait.
+    await AppendResponse(new { type = "custom_tool_call", name = "exec", call_id = "yielded-approval", input = "await tools.exec_command({sandbox_permissions: 'require_escalated'});" });
+    await AppendResponse(new { type = "custom_tool_call_output", call_id = "yielded-approval", output = new[] { new { type = "input_text", text = "Script running with cell ID 42\nWall time 30 seconds" } } });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "yielded exec preserves approval wait");
+    codex = new CodexProvider(testHome);
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "yielded approval survives restart");
+    await AppendResponse(new { type = "function_call", name = "wait", call_id = "other-wait", arguments = "{\"cell_id\":\"99\"}" });
+    await AppendResponse(new { type = "function_call_output", call_id = "other-wait", output = "Script completed" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "unrelated cell completion preserves approval wait");
+    await AppendResponse(new { type = "function_call", name = "functions.wait", call_id = "approval-wait", arguments = "{\"cell_id\":\"42\"}" });
+    await AppendResponse(new { type = "function_call_output", call_id = "approval-wait", output = "Script running with cell ID 42\nWall time 10 seconds" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "repeated yield preserves approval wait");
+    await AppendResponse(new { type = "function_call", name = "wait", call_id = "approval-final", arguments = "{\"cell_id\":\"42\"}" });
+    codex = new CodexProvider(testHome);
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "pending wait call survives restart");
+    await AppendResponse(new { type = "function_call_output", call_id = "approval-final", output = new[] { new { type = "input_text", text = "Script completed" } } });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Working, "final cell result clears approval wait");
+    await AppendResponse(new { type = "custom_tool_call", name = "exec", call_id = "aborted-approval", input = "await tools.exec_command({sandbox_permissions: 'require_escalated'});" });
+    await AppendResponse(new { type = "custom_tool_call_output", call_id = "aborted-approval", output = "Script running with cell ID 43" });
+    await AppendEvent("turn_aborted");
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Stopped, "abort clears yielded approval");
+    await AppendEvent("task_started");
     codex.ActiveWindow = TimeSpan.Zero;
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(!live.IsActive, "configured active window expires recent session");
@@ -406,6 +454,17 @@ try
     var claude = (await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single();
     Assert(claude.State == AgentState.RateLimited && claude.RateLimitResetAt is { } claudeReset
         && Math.Abs((claudeReset - resetLocal.ToUniversalTime()).TotalMinutes) < 1, "Claude usage limit detected with reset time");
+    await File.AppendAllTextAsync(claudeLog, System.Text.Json.JsonSerializer.Serialize(new {
+        type = "assistant", sessionId = claudeId, message = new { content = new[] { new { type = "tool_use", name = "AskUserQuestion", id = "limited-question" } } }
+    }) + "\n" + ClaudeLine("assistant", "try again in 1 hours", true, "rate_limit"));
+    claude = (await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single();
+    Assert(claude.State == AgentState.WaitingForInput && claude.RateLimitResetAt > DateTime.UtcNow,
+        "Claude pending question stays yellow despite usage limit");
+    await File.AppendAllTextAsync(claudeLog, System.Text.Json.JsonSerializer.Serialize(new {
+        type = "user", sessionId = claudeId, message = new { content = new[] { new { type = "tool_result", tool_use_id = "limited-question", content = "answer" } } }
+    }) + "\n" + ClaudeLine("assistant", "try again in 1 hours", true, "rate_limit"));
+    Assert((await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single().State == AgentState.RateLimited,
+        "Claude usage limit is visible once question is answered");
     await File.AppendAllTextAsync(claudeLog, ClaudeLine("user", "계속"));
     claude = (await new ClaudeCodeProvider(limitHome).DiscoverAsync(CancellationToken.None)).Single();
     Assert(claude.RateLimitResetAt is null && claude.State == AgentState.Idle, "new Claude message clears usage limit");
@@ -430,7 +489,7 @@ try
     resumer.Check([due, due with { Id = "codex:child", ParentSessionId = due.Id }, due with { Id = "codex:old", RateLimitResetAt = resumeClock.Now.UtcDateTime.AddHours(-2) }]);
     resumer.Check([due]);
     Assert(launches.Count == 1 && launches[0].Id == due.Id, "resume once per reset, skipping children and stale limits");
-    Assert(launches[0].Info.ArgumentList.SequenceEqual(new[] { "exec", "resume", "--skip-git-repo-check", "-c", "sandbox_mode=workspace-write", threadId, "-" })
+    Assert(launches[0].Info.ArgumentList.SkipWhile(x => x != "exec").SequenceEqual(new[] { "exec", "resume", "--skip-git-repo-check", "-c", "sandbox_mode=workspace-write", threadId, "-" })
         && launches[0].Info.WorkingDirectory == limitHome && launches[0].Prompt == AgentHud.AutoResumer.DefaultPrompt, "Codex resume command");
     resumer.Check([due with { RateLimitResetAt = resumeClock.Now.UtcDateTime.AddMinutes(-3) }]);
     Assert(launches.Count == 2, "a new limit on the same session resumes again");
@@ -467,6 +526,129 @@ promptResumer.Prompt = "사용량 한도로 중단됐던 작업을 이어서 진
 Assert(promptResumer.CustomPrompt is null && promptResumer.Prompt == AgentHud.AutoResumer.DefaultPrompt, "a saved default prompt in any language follows the current language");
 promptResumer.Prompt = "keep going";
 Assert(promptResumer.CustomPrompt == "keep going", "a custom resume prompt is kept");
+// OpenCode discovery uses an isolated SQLite fixture, never the user's database.
+var openHome = Path.Combine(Path.GetTempPath(), "agenthud-opencode-" + Guid.NewGuid());
+try
+{
+    var openClock = new TestTimeProvider();
+    var openProvider = new OpenCodeProvider(openHome, openClock);
+    Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Count == 0, "missing OpenCode database is empty");
+    var openRoot = Path.Combine(openHome, ".local", "share", "opencode");
+    Directory.CreateDirectory(openRoot);
+    using (var db = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        { DataSource = Path.Combine(openRoot, "opencode.db"), Pooling = false }.ToString()))
+    {
+        await db.OpenAsync();
+        async Task Execute(string sql)
+        {
+            using var cmd = db.CreateCommand(); cmd.CommandText = sql;
+            cmd.Parameters.AddWithValue("$now", openClock.Now.ToUnixTimeMilliseconds());
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await Execute("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE session(id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER);
+            CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+            INSERT INTO session VALUES ('ses_live', '/project', 'Build feature', $now, $now, NULL),
+                ('ses_old', '/project', 'Old', $now-7200000, $now-7200000, NULL),
+                ('ses_archived', '/project', 'Archived', $now, $now, $now),
+                ('ses_bad', '/project', 'Bad message', $now, $now, NULL),
+                ('ses_empty', '', 'No project', $now, $now, NULL);
+            INSERT INTO message VALUES ('msg_1', 'ses_live', $now, '{"role":"user"}'),
+                ('msg_bad', 'ses_bad', $now, '{broken');
+            """);
+        var found = await openProvider.DiscoverAsync(CancellationToken.None);
+        Assert(found.Count == 3, "OpenCode excludes stale and pathless sessions, reads WAL");
+        var liveOpen = found.Single(x => x.Id == "opencode:ses_live");
+        Assert(liveOpen.AgentType == AgentType.OpenCode && liveOpen.DisplayName == "OpenCode" && liveOpen.State == AgentState.Working
+            && liveOpen.SessionTitle == "Build feature" && liveOpen.WorktreePath == "/project", "OpenCode maps identity, title, project and working state");
+        Assert(found.Single(x => x.Id == "opencode:ses_archived") is { IsActive: false, State: AgentState.Completed }, "OpenCode archived session is completed");
+        Assert(found.Single(x => x.Id == "opencode:ses_bad").State == AgentState.Idle, "malformed OpenCode message is isolated");
+        await Execute("""INSERT INTO message VALUES ('msg_2', 'ses_live', $now+1, '{"role":"assistant","finish":"stop","time":{"completed":1}}');""");
+        var completed = (await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id);
+        Assert(completed.State == AgentState.Completed, "OpenCode assistant final response completes turn");
+        var openRegistry = new AgentSessionRegistry(openClock);
+        openRegistry.Replace([liveOpen]); openRegistry.Replace([completed]);
+        Assert(openRegistry.GetAllAgents().Single().HasUnreadCompletion, "OpenCode completion uses existing registry notification");
+        await Execute("""UPDATE message SET data = '{"role":"assistant","finish":"tool-calls"}' WHERE id='msg_2';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Working, "OpenCode tool call is not completion");
+        await Execute("""
+            CREATE TABLE part(id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, data TEXT);
+            INSERT INTO part VALUES ('question', 'ses_live', 'msg_2', '{"type":"tool","tool":"question","state":{"status":"running"}}'),
+                ('bad-part', 'ses_live', 'msg_2', '{broken');
+            """);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.WaitingForInput,
+            "OpenCode running question waits for input despite malformed sibling part");
+        foreach (var status in new[] { "completed", "error", "pending" })
+        {
+            await Execute($"UPDATE part SET data = '{{\"type\":\"tool\",\"tool\":\"question\",\"state\":{{\"status\":\"{status}\"}}}}' WHERE id='question';");
+            Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Working,
+                "OpenCode answered, cancelled or queued question is not an input wait");
+        }
+        await Execute("""UPDATE part SET data = '{"type":"tool","tool":"bash","state":{"status":"running"}}' WHERE id='question';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Working,
+            "OpenCode running command does not imply permission wait");
+        await Execute("""UPDATE part SET data = '{"type":"tool","tool":"question","state":{"status":"running"}}', message_id='msg_1' WHERE id='question';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Working,
+            "OpenCode question from older message does not revive input wait");
+        await Execute("""UPDATE part SET message_id='msg_2' WHERE id='question';""");
+        await Execute("""UPDATE message SET data = '{"error":{"name":"MessageAbortedError"}}' WHERE id='msg_2';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Stopped, "OpenCode abort stops turn");
+        await Execute("""UPDATE message SET data = '{"error":{"name":"APIError"}}' WHERE id='msg_2';""");
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Error, "OpenCode API error state");
+        await Execute("""UPDATE message SET data = '{"role":"user"}' WHERE id='msg_2';""");
+        openClock.Now = openClock.Now.AddMinutes(3);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == liveOpen.Id).State == AgentState.Idle, "OpenCode stale unfinished turn is not working forever");
+        await Execute("""
+            CREATE TABLE session_v2 AS SELECT * FROM session WHERE id='ses_live';
+            UPDATE session_v2 SET title='V2 conversation';
+            """);
+        var v2 = (await openProvider.DiscoverAsync(CancellationToken.None)).Single();
+        Assert(v2.SessionTitle == "V2 conversation" && v2.State == AgentState.Idle, "OpenCode prefers V2 and does not interpret legacy messages as V2 state");
+        Assert(new AgentHud.AutoResumer(openHome, openHome).CreateStartInfo(v2 with { Id = "opencode:" + Guid.NewGuid(), ProjectPath = openHome }) is null,
+            "OpenCode never uses the Codex resume command");
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        try { await openProvider.DiscoverAsync(cancelled.Token); Assert(false, "OpenCode cancellation throws"); }
+        catch (OperationCanceledException) { }
+        openClock.Now = openClock.Now.AddHours(2);
+        Assert((await openProvider.DiscoverAsync(CancellationToken.None)).Count == 0, "OpenCode sessions age out using injected clock");
+    }
+}
+finally { if (Directory.Exists(openHome)) Directory.Delete(openHome, true); }
+
+// OpenCode Go response fixtures contain no real account data.
+var goFetched = new DateTime(2026, 10, 16, 0, 0, 0, DateTimeKind.Utc);
+string GoMeter(string used, string limit = "100") => "{\"limitMicroCents\":\"" + limit + "\",\"usedMicroCents\":\"" + used + "\",\"resetsAt\":\"2026-10-17T09:00:00+09:00\"}";
+string GoResponse(string five, string week, string month) => "{\"product\":\"go-plus\",\"access\":{\"meters\":{\"fiveHour\":" + five + ",\"week\":" + week + ",\"month\":" + month + "}}}";
+var goJson = GoResponse(GoMeter("25"), GoMeter("50"), GoMeter("150"));
+var goUsage = AgentHud.OpenCodeGoUsage.Parse(goJson, goFetched);
+Assert(goUsage.FiveHour.UsedPercent == 25 && goUsage.Week.UsedPercent == 50 && goUsage.Month.UsedPercent == 100,
+    "Go maps all three meters and clamps exhausted allowance");
+Assert(goUsage.FiveHour.ResetsAt == new DateTime(2026, 10, 17, 0, 0, 0, DateTimeKind.Utc)
+    && goUsage.FetchedAt == goFetched, "Go preserves fetched time and converts offset resets to UTC");
+Assert(goUsage.FiveHour.PercentAt(goUsage.FiveHour.ResetsAt) == 0, "Go allowance resets at server time");
+var previousCulture = System.Globalization.CultureInfo.CurrentCulture;
+try
+{
+    System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+    var fractional = AgentHud.OpenCodeGoUsage.Parse(GoResponse(GoMeter("1.5", "10"), GoMeter("0"), GoMeter("1")), goFetched);
+    Assert(fractional.FiveHour.UsedPercent == 15 && fractional.Week.UsedPercent == 0, "Go currency amounts use invariant culture");
+}
+finally { System.Globalization.CultureInfo.CurrentCulture = previousCulture; }
+foreach (var invalid in new[]
+{
+    goJson.Replace("go-plus", "zen"), "{}", "{broken",
+    GoResponse(GoMeter("1", "0"), GoMeter("1"), GoMeter("1")),
+    GoResponse(GoMeter("-1"), GoMeter("1"), GoMeter("1")),
+    GoResponse(GoMeter("NaN"), GoMeter("1"), GoMeter("1")),
+    goJson.Replace("2026-10-17T09:00:00+09:00", "not-a-date")
+})
+{
+    var rejected = false;
+    try { AgentHud.OpenCodeGoUsage.Parse(invalid, goFetched); }
+    catch (Exception e) when (e is FormatException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException) { rejected = true; }
+    Assert(rejected, "Go rejects invalid or unsupported response instead of showing a false allowance");
+}
 Console.WriteLine("All registry and discovery checks passed.");
 
 if (args.Contains("--discover"))

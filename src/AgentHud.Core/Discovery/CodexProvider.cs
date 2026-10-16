@@ -62,6 +62,8 @@ public sealed class CodexProvider : IAgentProvider
                         LastActivityAt = ParseDate(GetString(root, "timestamp")) ?? ParseDate(GetString(payload, "timestamp")) ?? DateTime.MinValue, State = AgentState.Unknown
                     };
                     var pendingQuestion = cached is not null && file.Length >= cached.Length ? cached.PendingQuestion : null;
+                    var pendingApprovals = cached is not null && file.Length >= cached.Length ? new HashSet<string>(cached.PendingApprovals) : new HashSet<string>();
+                    var pendingApprovalWaits = cached is not null && file.Length >= cached.Length ? new Dictionary<string, string>(cached.PendingApprovalWaits) : new Dictionary<string, string>();
                     var pendingAsyncQuestion = cached is not null && file.Length >= cached.Length && cached.PendingAsyncQuestion;
                     var rateLimitReset = cached is not null && file.Length >= cached.Length ? cached.Session.RateLimitResetAt : null;
                     var limitWindowReset = cached is not null && file.Length >= cached.Length ? cached.LimitWindowReset : null;
@@ -99,6 +101,7 @@ public sealed class CodexProvider : IAgentProvider
                                     && GetString(body, "name") is "request_user_input" or "functions.request_user_input";
                                 var isAsyncQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
                                     && GetString(body, "name") is "request_user_input_async" or "functions.request_user_input_async";
+                                var isApproval = kind is ("response_item", "function_call" or "custom_tool_call") && RequestsApproval(body);
                                 var isAnswer = kind is ("response_item", "function_call_output" or "custom_tool_call_output")
                                     && pendingQuestion is not null && GetString(body, "call_id") == pendingQuestion;
                                 var state = kind switch
@@ -122,19 +125,45 @@ public sealed class CodexProvider : IAgentProvider
                                 }
                                 else if (kind is ("event_msg", "task_started" or "user_message" or "task_complete" or "turn_aborted"))
                                     pendingQuestion = null;
+                                if (kind is ("event_msg", "task_started" or "user_message" or "task_complete" or "turn_aborted"))
+                                {
+                                    pendingApprovals.Clear();
+                                    pendingApprovalWaits.Clear();
+                                }
+                                if (isApproval && GetString(body, "call_id") is { } approvalId)
+                                    pendingApprovals.Add(approvalId);
+                                if (kind is ("response_item", "function_call" or "custom_tool_call")
+                                    && ApprovalWaitCell(body) is { } cell && pendingApprovals.Contains(cell)
+                                    && GetString(body, "call_id") is { } waitId)
+                                    pendingApprovalWaits[waitId] = cell;
+                                if (kind is ("response_item", "function_call_output" or "custom_tool_call_output")
+                                    && GetString(body, "call_id") is { } outputId)
+                                {
+                                    var resolvesApproval = pendingApprovals.Remove(outputId);
+                                    if (pendingApprovalWaits.Remove(outputId, out var waitedCell))
+                                        resolvesApproval |= pendingApprovals.Remove(waitedCell);
+                                    if (resolvesApproval)
+                                    {
+                                        // Codex Work (2026-10-16): exec can yield while approval is still pending.
+                                        // Track its cell until wait returns the final result, including after restart.
+                                        if (RunningApprovalCell(body) is { } runningCell) pendingApprovals.Add(runningCell);
+                                        state = AgentState.Working;
+                                    }
+                                }
                                 if (isAsyncQuestion) pendingAsyncQuestion = true;
                                 // Async tool output acknowledges delivery, not a user answer.
                                 // Any subsequent user message ends this inferred waiting state.
                                 if (kind is ("event_msg", "user_message" or "turn_aborted"))
                                     pendingAsyncQuestion = false;
                                 if (pendingAsyncQuestion) state = AgentState.WaitingForInput;
+                                if (pendingApprovals.Count > 0) state = AgentState.WaitingForApproval;
                                 session = session with { State = state, RateLimitResetAt = rateLimitReset };
                             }
                         }
                         catch (JsonException) { }
                     }
                     if (session.LastActivityAt == DateTime.MinValue) session = session with { LastActivityAt = file.LastWriteTimeUtc };
-                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion, limitWindowReset);
+                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion, limitWindowReset, pendingApprovals, pendingApprovalWaits);
                     _cache[path] = cached;
                 }
                 var now = DateTime.UtcNow;
@@ -159,7 +188,43 @@ public sealed class CodexProvider : IAgentProvider
         foreach (var path in _cache.Keys.Where(path => !seen.Contains(path)).ToArray()) _cache.Remove(path);
         return result;
     }
-    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion, DateTime? LimitWindowReset);
+    // Approval is inferred from the requested sandbox mode until the matching tool output.
+    private static bool RequestsApproval(JsonElement body)
+    {
+        if (GetString(body, "arguments") is { } arguments)
+        {
+            try
+            {
+                using var json = JsonDocument.Parse(arguments);
+                return GetString(json.RootElement, "sandbox_permissions") == "require_escalated";
+            }
+            catch (JsonException) { }
+        }
+        // Code-mode wrapper observed in Codex Work (2026-10-16); input is JavaScript, not JSON.
+        return GetString(body, "name") is "exec" or "functions.exec"
+            && GetString(body, "input") is { } input
+            && System.Text.RegularExpressions.Regex.IsMatch(input,
+                """\bsandbox_permissions\s*["']?\s*:\s*["']require_escalated["']""");
+    }
+    private static string? ApprovalWaitCell(JsonElement body)
+    {
+        if (GetString(body, "name") is not ("wait" or "functions.wait") || GetString(body, "arguments") is not { } arguments) return null;
+        try
+        {
+            using var json = JsonDocument.Parse(arguments);
+            return GetString(json.RootElement, "cell_id") is { } cell ? "cell:" + cell : null;
+        }
+        catch (JsonException) { return null; }
+    }
+    private static string? RunningApprovalCell(JsonElement body)
+    {
+        if (!body.TryGetProperty("output", out var output)) return null;
+        var text = output.ValueKind == JsonValueKind.String ? output.GetString() ?? ""
+            : output.ValueKind == JsonValueKind.Array ? string.Join("\n", output.EnumerateArray().Select(x => GetString(x, "text"))) : "";
+        var match = System.Text.RegularExpressions.Regex.Match(text, @"(?:^|\n)Script running with cell ID ([^\s]+)");
+        return match.Success ? "cell:" + match.Groups[1].Value : null;
+    }
+    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion, DateTime? LimitWindowReset, HashSet<string> PendingApprovals, Dictionary<string, string> PendingApprovalWaits);
     // 리셋 후 이 시간 동안은 재개를 기다리는 세션으로 표시
     public static readonly TimeSpan LimitGrace = TimeSpan.FromMinutes(30);
     // task_complete 등의 error.codex_error_info가 usage_limit_exceeded면 그 문구

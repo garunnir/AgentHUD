@@ -46,7 +46,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 var hasBackground = alive && transcript.BackgroundSince > DateTime.UtcNow - BackgroundWindow;
                 // Status can read idle while work is still coming (open turn, background task, scheduled wakeup); that is progress, not a completion.
                 if (state == AgentState.Idle && (transcript.MidTurn || hasBackground || wakeupAt > DateTime.UtcNow)) state = AgentState.Working;
-                if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForApproval))
+                if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForInput or AgentState.WaitingForApproval))
                     state = AgentState.RateLimited;
                 result.Add(new AgentSession
                 {
