@@ -47,6 +47,10 @@ Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못�
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
 Settings.Title	Settings	설정
+Settings.Tab.General	General	일반
+Settings.Tab.Alerts	Alerts	알림
+Settings.Tab.Claude	Claude	Claude
+Settings.Tab.OpenCode	OpenCode	OpenCode
 Settings.Language	Language	언어
 Settings.LanguageAuto	System ({0})	시스템 ({0})
 Settings.LanguageMissing	not translated, English	번역 없음, 영어
