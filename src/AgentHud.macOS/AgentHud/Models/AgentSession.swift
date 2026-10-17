@@ -2,19 +2,20 @@ import Foundation
 
 public struct LimitWindow: Codable, Equatable, Sendable {
     public let usedPercent: Double
-    public let resetsAt: Date
+    public let resetsAt: Date?
     /// Window length reported by the server (minutes). Used for the even-pace marker,
     /// since plans do not always use a 5 h / 7 day window.
     public let windowMinutes: Int?
 
-    public init(usedPercent: Double, resetsAt: Date, windowMinutes: Int? = nil) {
+    public init(usedPercent: Double, resetsAt: Date?, windowMinutes: Int? = nil) {
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
         self.windowMinutes = windowMinutes
     }
 
     public func percentAt(_ now: Date) -> Double {
-        now >= resetsAt ? 0 : usedPercent
+        guard let resetsAt else { return usedPercent }
+        return now >= resetsAt ? 0 : usedPercent
     }
 }
 

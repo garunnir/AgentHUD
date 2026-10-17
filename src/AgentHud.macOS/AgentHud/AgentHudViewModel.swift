@@ -408,7 +408,7 @@ public final class AgentHudViewModel: ObservableObject {
                           fromServer: Bool = false) -> UsageRow {
         let loc = Localiz.current
         let used = window.percentAt(now)
-        let left = window.resetsAt.timeIntervalSince(now)
+        let left = window.resetsAt?.timeIntervalSince(now) ?? 0
         var text = ""
         if left > 0 && left <= 31 * 86400 {
             if left >= 86400 {
