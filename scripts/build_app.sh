@@ -13,7 +13,7 @@ PACKAGE="$ROOT/src/AgentHud.macOS"
 DIST="$PACKAGE/dist"
 APP="$DIST/AgentHud.app"
 BUNDLE_ID="com.garunnir.agenthud"
-VERSION="0.1.0"
+VERSION="${VERSION:-0.1.0}"
 
 cd "$PACKAGE"
 

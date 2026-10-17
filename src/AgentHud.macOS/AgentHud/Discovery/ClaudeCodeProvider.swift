@@ -66,7 +66,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
                 finalState = .working
             }
             if alive && (transcript.rateLimitResetAt?.timeIntervalSinceNow ?? 0) > 0
-                && state != AgentState.stopped && state != AgentState.waitingForApproval {
+                && finalState != .stopped && finalState != .waitingForInput && finalState != .waitingForApproval {
                 finalState = .rateLimited
             }
 

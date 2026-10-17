@@ -5,7 +5,7 @@ namespace AgentHud;
 
 public partial class SettingsWindow : Window
 {
-    public SettingsWindow() => InitializeComponent();
+    public SettingsWindow() { InitializeComponent(); MaxHeight = Math.Max(200, SystemParameters.WorkArea.Height - 40); }
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => DragMove();
     private void Close_OnClick(object sender, RoutedEventArgs e) => Close();
     private void BrowseSound_OnClick(object sender, RoutedEventArgs e)
@@ -27,5 +27,13 @@ public partial class SettingsWindow : Window
         if (DataContext is MainWindow main && !string.IsNullOrWhiteSpace(KeyBox.Password)) main.SetClaudeSessionKey(KeyBox.Password);
         KeyBox.Clear();
     }
+    private void OpenCodeLogin_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LoginOpenCode(this); }
+    private async void OpenCodeRefresh_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindow main || sender is not System.Windows.Controls.Button button) return;
+        button.IsEnabled = false;
+        try { await main.RefreshOpenCodeAsync(); } finally { button.IsEnabled = true; }
+    }
+    private void OpenCodeLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutOpenCode(); }
     private void DeleteKey_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.SetClaudeSessionKey(null); }
 }

@@ -59,7 +59,7 @@ public final class CodexProvider: IAgentProvider {
                 continue
             }
 
-            if var cached = cache[path], cached.length == fileLength, cached.modified == fileModified {
+            if let cached = cache[path], cached.length == fileLength, cached.modified == fileModified {
                 let now = Date()
                 let age = now.timeIntervalSince(cached.session.lastActivityAt)
                 let limitPending = cached.session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
@@ -117,6 +117,17 @@ public final class CodexProvider: IAgentProvider {
             var pendingAsyncQuestion = false
             var rateLimitReset: Date?
             var limitWindowReset: Date?
+            var pendingApprovals = Set<String>()
+            var pendingApprovalWaits: [String: String] = [:]
+            if let previous = cache[path], fileLength >= previous.length {
+                session = previous.session
+                pendingQuestion = previous.pendingQuestion
+                pendingAsyncQuestion = previous.pendingAsyncQuestion
+                rateLimitReset = previous.session.rateLimitResetAt
+                limitWindowReset = previous.limitWindowReset
+                pendingApprovals = previous.pendingApprovals
+                pendingApprovalWaits = previous.pendingApprovalWaits
+            }
 
             guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { continue }
             defer { try? stream.close() }
@@ -160,11 +171,13 @@ public final class CodexProvider: IAgentProvider {
                         ?? timestamp.addingTimeInterval(RateLimitParser.fallbackDelay)
                 }
 
-                let isQuestion = kind == ("response_item", "function_call") || kind == ("response_item", "custom_tool_call")
+                let isCall = kind == ("response_item", "function_call") || kind == ("response_item", "custom_tool_call")
+                let isOutput = kind == ("response_item", "function_call_output") || kind == ("response_item", "custom_tool_call_output")
+                let isQuestion = isCall
                     && (body["name"] as? String == "request_user_input" || body["name"] as? String == "functions.request_user_input")
-                let isAsyncQuestion = kind == ("response_item", "function_call") || kind == ("response_item", "custom_tool_call")
+                let isAsyncQuestion = isCall
                     && (body["name"] as? String == "request_user_input_async" || body["name"] as? String == "functions.request_user_input_async")
-                let isAnswer = kind == ("response_item", "function_call_output") || kind == ("response_item", "custom_tool_call_output")
+                let isAnswer = isOutput
                     && pendingQuestion != nil && body["call_id"] as? String == pendingQuestion
 
                 var state = session.state
@@ -186,9 +199,33 @@ public final class CodexProvider: IAgentProvider {
                     || kind == ("event_msg", "task_complete") || kind == ("event_msg", "turn_aborted") {
                     pendingQuestion = nil
                 }
+                if kind == ("event_msg", "task_started") || kind == ("event_msg", "user_message")
+                    || kind == ("event_msg", "task_complete") || kind == ("event_msg", "turn_aborted") {
+                    pendingApprovals.removeAll()
+                    pendingApprovalWaits.removeAll()
+                }
+                if isCall, requestsApproval(body), let callId = body["call_id"] as? String {
+                    pendingApprovals.insert(callId)
+                }
+                if isCall, let cell = approvalWaitCell(body), pendingApprovals.contains(cell),
+                   let callId = body["call_id"] as? String {
+                    pendingApprovalWaits[callId] = cell
+                }
+                if isOutput, let callId = body["call_id"] as? String {
+                    var resolvesApproval = pendingApprovals.remove(callId) != nil
+                    if let cell = pendingApprovalWaits.removeValue(forKey: callId) {
+                        let removed = pendingApprovals.remove(cell) != nil
+                        resolvesApproval = resolvesApproval || removed
+                    }
+                    if resolvesApproval {
+                        if let cell = runningApprovalCell(body) { pendingApprovals.insert(cell) }
+                        state = .working
+                    }
+                }
                 if isAsyncQuestion { pendingAsyncQuestion = true }
                 if kind == ("event_msg", "user_message") || kind == ("event_msg", "turn_aborted") { pendingAsyncQuestion = false }
                 if pendingAsyncQuestion { state = .waitingForInput }
+                if !pendingApprovals.isEmpty { state = .waitingForApproval }
 
                 session.state = state
                 session.rateLimitResetAt = rateLimitReset
@@ -198,8 +235,9 @@ public final class CodexProvider: IAgentProvider {
                 session.lastActivityAt = fileModified
             }
 
-            cache[path] = CachedSession(length: fileLength, modified: fileModified, session: session, pendingQuestion: pendingQuestion, pendingAsyncQuestion: pendingAsyncQuestion, limitWindowReset: limitWindowReset)
+            cache[path] = CachedSession(length: fileLength, modified: fileModified, session: session, pendingQuestion: pendingQuestion, pendingAsyncQuestion: pendingAsyncQuestion, limitWindowReset: limitWindowReset, pendingApprovals: pendingApprovals, pendingApprovalWaits: pendingApprovalWaits)
 
+            session.sessionTitle = titles[session.id]
             let now = Date()
             let age = now.timeIntervalSince(session.lastActivityAt)
             let limitPending = session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
@@ -225,6 +263,37 @@ public final class CodexProvider: IAgentProvider {
         let pendingQuestion: String?
         let pendingAsyncQuestion: Bool
         let limitWindowReset: Date?
+        let pendingApprovals: Set<String>
+        let pendingApprovalWaits: [String: String]
+    }
+
+    // Codex Work rollout format verified 2026-10-16, matching the Windows provider.
+    private func requestsApproval(_ body: [String: Any]) -> Bool {
+        if let arguments = body["arguments"] as? String,
+           let json = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any] {
+            return json["sandbox_permissions"] as? String == "require_escalated"
+        }
+        guard let name = body["name"] as? String, name == "exec" || name == "functions.exec",
+              let input = body["input"] as? String else { return false }
+        return input.range(of: #"\bsandbox_permissions\s*["']?\s*:\s*["']require_escalated["']"#, options: .regularExpression) != nil
+    }
+
+    private func approvalWaitCell(_ body: [String: Any]) -> String? {
+        guard let name = body["name"] as? String, name == "wait" || name == "functions.wait",
+              let arguments = body["arguments"] as? String,
+              let json = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any],
+              let cell = json["cell_id"] as? String else { return nil }
+        return "cell:" + cell
+    }
+
+    private func runningApprovalCell(_ body: [String: Any]) -> String? {
+        let text = body["output"] as? String
+            ?? (body["output"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? ""
+        for line in text.components(separatedBy: "\n") where line.hasPrefix("Script running with cell ID ") {
+            let suffix = line.dropFirst("Script running with cell ID ".count)
+            if let cell = suffix.split(whereSeparator: { $0.isWhitespace }).first { return "cell:" + String(cell) }
+        }
+        return nil
     }
 
     private func usageLimitMessage(_ body: [String: Any]) -> String? {
