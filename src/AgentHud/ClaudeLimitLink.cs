@@ -14,8 +14,6 @@ public sealed class ClaudeLimitLink
     private readonly string _dir;
     private readonly string _settingsPath;
     private (long Length, DateTime Modified, (LimitWindow? FiveHour, LimitWindow? SevenDay) Limits)? _cached;
-    // API로 조회한 한도 등 추가 소스. 상태줄 파일보다 최근이면 이쪽을 씀
-    public Func<(LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At)>? ExtraSource { get; set; }
 
     public ClaudeLimitLink(string home, string dataDirectory)
     {
@@ -63,13 +61,7 @@ public sealed class ClaudeLimitLink
         WriteSettings(settings);
     }
 
-    // 상태줄 스크립트 파일과 추가 소스(API) 중 더 최근에 갱신된 쪽의 한도. 둘 다 없으면 null
-    public (LimitWindow? FiveHour, LimitWindow? SevenDay) ReadLimits()
-    {
-        var script = ReadScriptLimits();
-        var extra = ExtraSource?.Invoke() ?? default;
-        return extra.At > script.At && (extra.FiveHour is not null || extra.SevenDay is not null) ? (extra.FiveHour, extra.SevenDay) : (script.Limits.FiveHour, script.Limits.SevenDay);
-    }
+    public (LimitWindow? FiveHour, LimitWindow? SevenDay) ReadLimits() => ReadScriptLimits().Limits;
 
     private ((LimitWindow? FiveHour, LimitWindow? SevenDay) Limits, DateTime At) ReadScriptLimits()
     {

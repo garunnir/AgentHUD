@@ -198,7 +198,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         InitializeComponent(); DataContext = this;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _codex = new CodexProvider(home);
-        _claudeLink.ExtraSource = () => _claudeApi.Latest;
         _claudeApi.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus))); UpdateUsage(_registry.GetAllAgents()); });
         Closed += (_, _) => _claudeApi.Dispose();
         _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex], _registry);
@@ -273,10 +272,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var claude = all.Where(x => x.AgentType == AgentType.ClaudeCode).ToArray();
         if (claude.Length > 0)
         {
-            // 상태줄 연동으로 받은 서버 한도가 있으면 그 값, 없으면 토큰 합계(와 예산)
-            var (fiveHour, sevenDay) = _claudeLink.ReadLimits();
-            rows.Add(fiveHour is { } five ? CodexRow(AgentType.ClaudeCode, "5h", five, now) : ClaudeRow("5h", claude.Sum(x => x.Tokens5h), _claudeBudget5h));
-            rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, UsageRow.Week, seven, now) : ClaudeRow(UsageRow.Week, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
+            // API를 설정했으면 그 세션만 신뢰한다. 인증 실패/계정 불일치 때 상태줄이나 로컬 추정치로 대체하면
+            // 다른 계정의 사용량처럼 보일 수 있으므로, 유효한 API 응답을 받기 전까지 Claude 행을 숨긴다.
+            var (fiveHour, sevenDay) = _claudeApi.IsConfigured
+                ? (_claudeApi.Latest.FiveHour, _claudeApi.Latest.SevenDay)
+                : _claudeLink.ReadLimits();
+            if (!_claudeApi.IsConfigured || fiveHour is not null || sevenDay is not null)
+            {
+                rows.Add(fiveHour is { } five ? CodexRow(AgentType.ClaudeCode, "5h", five, now) : ClaudeRow("5h", claude.Sum(x => x.Tokens5h), _claudeBudget5h));
+                rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, UsageRow.Week, seven, now) : ClaudeRow(UsageRow.Week, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
+            }
         }
         // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
         if (all.Any(x => x.AgentType == AgentType.Codex))

@@ -16,6 +16,7 @@ public sealed class ClaudeUsageApi : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _orgId;
+    private int _credentialsVersion;
     private (LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At) _latest;
     // 언어가 바뀌어도 다시 그릴 수 있게 테이블 키와 인자로 보관
     private (string Key, object?[] Args) _status = ("Api.NotConfigured", []);
@@ -30,19 +31,33 @@ public sealed class ClaudeUsageApi : IDisposable
     }
 
     public bool HasKey => File.Exists(_keyPath);
+    public bool IsConfigured => HasKey && _orgId is not null;
     public string? OrgId
     {
         get => _orgId;
-        set { value = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); if (_orgId == value) return; _orgId = value; _ = RefreshAsync(); }
+        set
+        {
+            value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            if (_orgId == value) return;
+            _orgId = value;
+            Interlocked.Increment(ref _credentialsVersion);
+            _latest = default;
+            Updated?.Invoke();
+            _ = RefreshAsync();
+        }
     }
     public (LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At) Latest => _latest;
 
     public void SetKey(string? key)
     {
         key = Clean(key);
+        Interlocked.Increment(ref _credentialsVersion);
         if (string.IsNullOrEmpty(key)) { try { File.Delete(_keyPath); } catch (IOException) { } _latest = default; SetStatus("Api.NotConfigured"); Updated?.Invoke(); return; }
         Directory.CreateDirectory(Path.GetDirectoryName(_keyPath)!);
         File.WriteAllBytes(_keyPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser));
+        // 새 키가 이전 키와 같은 계정이라는 보장이 없으므로 검증 전까지 이전 계정의 사용량을 숨긴다.
+        _latest = default;
+        Updated?.Invoke();
         _ = RefreshAsync();
     }
 
@@ -66,38 +81,48 @@ public sealed class ClaudeUsageApi : IDisposable
     public async Task RefreshAsync()
     {
         if (!await _gate.WaitAsync(0)) return;
+        var credentialsVersion = Volatile.Read(ref _credentialsVersion);
+        bool IsCurrent() => credentialsVersion == Volatile.Read(ref _credentialsVersion);
         try
         {
-            if (!HasKey || _orgId is null) { SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); return; }
-            if (!Guid.TryParse(_orgId, out var org)) { SetStatus("Api.OrgIdInvalid"); return; }
+            if (!HasKey || _orgId is null) { if (IsCurrent()) { _latest = default; SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); } return; }
+            if (!Guid.TryParse(_orgId, out var org)) { if (IsCurrent()) { _latest = default; SetStatus("Api.OrgIdInvalid"); } return; }
             string key;
             try { key = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(_keyPath), null, DataProtectionScope.CurrentUser)); }
-            catch (Exception e) when (e is CryptographicException or IOException) { SetStatus("Api.KeyUnreadable"); return; }
+            catch (Exception e) when (e is CryptographicException or IOException) { if (IsCurrent()) { _latest = default; SetStatus("Api.KeyUnreadable"); } return; }
             // Cloudflare 때문에 일반 HTTP 클라이언트로는 막혀서, 화면 밖 WebView2(Chromium)로 조회한다(UI 스레드 필요)
             var url = $"https://claude.ai/api/organizations/{org}/usage";
             var (code, body) = await Application.Current.Dispatcher.InvokeAsync(() => _web.GetAsync(url, key, _stop.Token)).Task.Unwrap();
             if (code != 200)
             {
+                if (!IsCurrent()) return;
                 var (blocked, reason) = ErrorReason(body);
                 if (blocked) SetStatus("Api.Blocked");
-                else if (code is 401 or 403) SetStatus("Api.AuthFailed", code, reason);
+                else if (code is 401 or 403) { _latest = default; SetStatus("Api.AuthFailed", code, reason); }
                 else if (code < 0) SetStatus("Api.ConnectFailed");
                 else SetStatus("Api.RequestFailed", code, reason);
                 return;
             }
+            if (!IsCurrent()) return;
             if (WebViewFetcher.LooksLikeChallenge(body)) { SetStatus("Api.Blocked"); return; }
             using var json = JsonDocument.Parse(body);
             var five = Window(json.RootElement, "five_hour");
             var seven = Window(json.RootElement, "seven_day");
-            if (five is null && seven is null) { SetStatus("Api.NoLimits"); return; }
+            if (five is null && seven is null) { _latest = default; SetStatus("Api.NoLimits"); return; }
             _latest = (five, seven, DateTime.UtcNow);
             SetStatus("Api.Connected", DateTime.Now);
         }
         catch (Exception e) when (e is TimeoutException or TaskCanceledException or JsonException or InvalidOperationException or System.Runtime.InteropServices.COMException or Microsoft.Web.WebView2.Core.WebView2RuntimeNotFoundException)
         {
-            if (!_stop.IsCancellationRequested) SetStatus("Api.ConnectError", e.GetType().Name);
+            if (!_stop.IsCancellationRequested && IsCurrent()) SetStatus("Api.ConnectError", e.GetType().Name);
         }
-        finally { _gate.Release(); Updated?.Invoke(); }
+        finally
+        {
+            var credentialsChanged = !IsCurrent();
+            _gate.Release();
+            Updated?.Invoke();
+            if (credentialsChanged && !_stop.IsCancellationRequested) _ = RefreshAsync();
+        }
     }
 
     // Cloudflare 챌린지인지와, JSON 오류면 error_code(없으면 message)만 돌려줌. 응답의 다른 내용은 쓰지 않음
