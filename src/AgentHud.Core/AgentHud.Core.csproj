@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.10" />
     <EmbeddedResource Include="Strings.tsv" LogicalName="AgentHud.Strings.tsv" />
   </ItemGroup>
 

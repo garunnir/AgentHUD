@@ -29,7 +29,7 @@ public final class OpenCodeGoUsageApi {
     private struct Status: Decodable {
         struct Meter: Decodable {
             let startsAt: Date?
-            let resetsAt: Date
+            let resetsAt: Date?
             let limitMicroCents: String
             let usedMicroCents: String
         }
@@ -117,8 +117,8 @@ public final class OpenCodeGoUsageApi {
         let used = Double(meter.usedMicroCents) ?? 0
         let percent = limit > 0 ? min(max(used / limit * 100, 0), 100) : 0
         let minutes: Int?
-        if let starts = meter.startsAt {
-            minutes = max(1, Int(meter.resetsAt.timeIntervalSince(starts) / 60))
+        if let starts = meter.startsAt, let resets = meter.resetsAt {
+            minutes = max(1, Int(resets.timeIntervalSince(starts) / 60))
         } else {
             minutes = nil
         }

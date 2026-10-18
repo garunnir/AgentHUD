@@ -16,6 +16,7 @@ let package = Package(
             resources: [
                 .copy("Resources/Strings.tsv")
             ]
-        )
+        ),
+        .testTarget(name: "AgentHudTests", dependencies: ["AgentHud"], path: "Tests")
     ]
 )

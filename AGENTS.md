@@ -58,6 +58,7 @@ docs/                       vscode-session-open.md (VS Code URI investigation), 
 | --- | --- |
 | Session state is wrong for Claude | `ClaudeCodeProvider.MapState`, `ReadTranscriptAsync` (AskUserQuestion, ScheduleWakeup, background tasks, rate_limit errors, token usage) |
 | Session state is wrong for Codex | `CodexProvider.DiscoverAsync` (event → state mapping, `request_user_input`, `ActiveWindow`) |
+| Session state is wrong for OpenCode | `OpenCodeProvider` (`MapV2State` over `session_v2` + `session_message` for v2, `MapState` over `session` + `message` + `part` for v1) |
 | Green check / completion behavior | `AgentSessionRegistry.TrackCompletion`, `AgentSession.DisplayState` |
 | Usage-limit reset time parsing | `RateLimitParser.ParseReset`, `CodexProvider.ExhaustedWindowReset` |
 | Auto-resume command line / CLI lookup | `AutoResumer.CreateStartInfo`, `FindOnPath`, `NewestExtensionBinary` |

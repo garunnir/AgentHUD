@@ -31,3 +31,28 @@ jobs:
 
       - name: Registry checks
         run: dotnet run --project tests/AgentHud.Tests/AgentHud.Tests.csproj -c Release
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build app bundle
+        run: bash scripts/build_app.sh
+
+      - name: Discovery regression tests
+        run: swift test --package-path src/AgentHud.macOS
+
+      - name: Verify app bundle
+        run: |
+          app=src/AgentHud.macOS/dist/AgentHud.app
+          test -x "$app/Contents/MacOS/AgentHud"
+          test -d "$app/Contents/Resources/AgentHud_AgentHud.bundle"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --deep --strict "$app"
