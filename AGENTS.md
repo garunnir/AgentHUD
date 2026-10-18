@@ -61,6 +61,7 @@ docs/                       vscode-session-open.md (VS Code URI investigation), 
 | Session state is wrong for OpenCode | `OpenCodeProvider` (`MapV2State` over `session_v2` + `session_message` for v2, `MapState` over `session` + `message` + `part` for v1) |
 | Green check / completion behavior | `AgentSessionRegistry.TrackCompletion`, `AgentSession.DisplayState` |
 | Usage-limit reset time parsing | `RateLimitParser.ParseReset`, `CodexProvider.ExhaustedWindowReset` |
+| Claude limit source choice / staleness | `ClaudeLimitPolicy`, `ClaudeLimitSnapshot` (`src/AgentHud.Core/ClaudeLimits.cs`), `ClaudeLimitLink`, `ClaudeUsageApi.Snapshot`/`Enabled` |
 | Auto-resume command line / CLI lookup | `AutoResumer.CreateStartInfo`, `FindOnPath`, `NewestExtensionBinary` |
 | Usage gauges (5h / weekly, pace marker) | `MainWindow.UpdateUsage`, `UsageRow`, `ClaudeUsageApi`, `ClaudeLimitLink` |
 | Double-click → VS Code | `MainWindow.OpenInVsCode`, `ConversationUri`; background in docs/vscode-session-open.md |
@@ -96,4 +97,6 @@ macOS: `./scripts/build_app.sh` (output `src/AgentHud.macOS/dist/AgentHud.app`).
 
 ## Runtime files
 
-`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `claude-statusline.ps1` + `claude-limits.json` (status-line link), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey), `webview2/` (WebView2 profile).
+`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile).
+
+macOS: `~/Library/Application Support/AgentHud/` holds the equivalent `claude-statusline.sh` + `claude-limits.json` + `claude-statusline-inner.txt` (see `ClaudeLimitLink.swift`). No sessionKey API is ported to macOS.

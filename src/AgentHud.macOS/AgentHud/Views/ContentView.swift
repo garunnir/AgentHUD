@@ -304,6 +304,17 @@ struct SettingsPopover: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: $viewModel.claudeLimitLinked) {
+                    Text(Localiz.current.string("Settings.ClaudeLink")).font(.system(size: 12))
+                }
+                .toggleStyle(.checkbox)
+                Text(Localiz.current.string("Settings.ClaudeLinkHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
             VStack(alignment: .leading, spacing: 6) {
                 Text("OpenCode Go")
                     .font(.system(size: 12, weight: .semibold))

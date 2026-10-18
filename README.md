@@ -32,7 +32,7 @@ Click the `–` button in the header, or double-click the header, to shrink the 
 - Hide individual sessions with `×`; waiting or completed sessions reappear when they need attention
 - Global and per-project memos
 - Optional sounds for completion and input or approval requests
-- Remaining usage gauges with reset times and an even-pace marker
+- Remaining usage gauges with reset times and an even-pace marker; Claude limits work out of the box, no setup needed
 - Usage-limit notifications and optional automatic resume
 - English and Korean UI, following the system language by default or selectable in Settings
 
@@ -107,11 +107,15 @@ Codex usage works automatically with no setup.
 
 ### Claude
 
-Choose one of these methods in Settings:
+Claude usage limits work out of the box: Agent HUD registers a Claude Code status line on first run (**Settings → Claude → Link real Claude limits**), which reports the official 5-hour and weekly limits. Your existing status line keeps running and is restored if you turn the option off. The same status line link is available on macOS.
 
-1. **Claude usage API**: enter your Organization ID and `sessionKey`. This works with the VS Code extension. The key is encrypted with Windows DPAPI and stored locally. This uses an unofficial claude.ai endpoint and may require the key to be entered again when it expires.
-2. **Link real Claude limits**: uses the Claude CLI status line. This works with the terminal CLI, not the VS Code extension, and restores your existing status line when disabled.
-3. **Token budget**: without either connection, Agent HUD estimates recent token use from detected sessions. Set a budget in Settings to show a gauge against it.
+The status line does not run inside the VS Code extension. If you work only there, the last value it reported stops updating, and the HUD marks it `Stale` (e.g. `42% · Stale`) rather than showing an increasingly stale number as if it were current. Once the window it describes has already reset, the old percentage is meaningless and the HUD shows just `Stale` instead.
+
+Advanced: **Settings → Claude → Use the claude.ai usage API** fetches usage from an unofficial claude.ai endpoint using your web session cookie (Organization ID + `sessionKey`). It is off unless you explicitly turn it on, it is mainly useful for VS Code extension users, and the cookie is encrypted with Windows DPAPI and stored locally. The cookie expires and must be entered again. (Windows only — there is no sessionKey API on macOS.)
+
+Agent HUD uses whichever source has the fresher valid value: a status line snapshot is discarded once it is over 12 hours old or once Claude session activity is newer than it (meaning work happened where the status line does not run); an API value is discarded once it is over 30 minutes old. On a tie the status line wins, since it is the official number for the account the CLI is signed in to. Values are never mixed between the two sources.
+
+Without any limit data, Agent HUD estimates recent token use from detected sessions; set a budget in Settings to show a gauge against it.
 
 ### OpenCode Go
 
@@ -140,7 +144,7 @@ For macOS questions and bug reports, please [open an issue](https://github.com/g
 
 ## Privacy
 
-Agent HUD has no telemetry. Session monitoring reads local agent files. Network access is used only for usage services you configure; macOS can also query Codex and OpenCode Go usage endpoints for its gauges.
+Agent HUD has no telemetry. Session monitoring reads local agent files. The default Claude status line path makes no network request of its own. Other network access is used only for usage services you configure, such as the opt-in claude.ai cookie API; macOS can also query Codex and OpenCode Go usage endpoints for its gauges.
 
 ## FAQ
 

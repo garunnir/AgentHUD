@@ -54,13 +54,19 @@ enum HudTheme {
         return "\(n)"
     }
 
-    /// Replaces .NET-style placeholders ({0}, {0:0}, {0:0.#}) in a localized string.
+    /// Replaces .NET-style placeholders ({0}, {0:0}, {0:0.#}, {0:MM-dd HH:mm}) in a localized string.
     static func formatPattern(_ pattern: String, _ args: [Any]) -> String {
         var result = pattern
         for (index, arg) in args.enumerated() {
-            // "{0:0}" is an integer format, "{0:0.#}" one decimal, "{0}" nothing special.
+            // "{0:0}" is an integer format, "{0:0.#}" one decimal, "{0:MM-dd HH:mm}" a date/time,
+            // "{0}" nothing special.
             result = result.replacingOccurrences(of: "{\(index):0.#}", with: stringValue(arg))
             result = result.replacingOccurrences(of: "{\(index):0}", with: stringValue(arg, decimals: 0))
+            if let date = arg as? Date {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MM-dd HH:mm"
+                result = result.replacingOccurrences(of: "{\(index):MM-dd HH:mm}", with: formatter.string(from: date))
+            }
             result = result.replacingOccurrences(of: "{\(index)}", with: stringValue(arg))
         }
         return result

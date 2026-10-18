@@ -28,6 +28,9 @@ Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
 Usage.ResetHoursMinutes	{0}h {1}m	{0}시간 {1}분
 Usage.PaceTip	Even-pace target · {0:0}% remaining (bar ending left of the line = spending faster than the plan)	균등 소비 기준 권장 잔량 {0:0}% · 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 소모 중
+Usage.Stale	Stale	오래됨
+Usage.StaleValue	{0:0}% · Stale	{0:0}% · 오래됨
+Usage.StaleTip	The last known limit is too old to trust: the Claude Code status line has not reported since then (it does not run inside the VS Code extension). Run Claude Code in a terminal once to refresh it. Last updated {0:MM-dd HH:mm}.	마지막으로 알려진 한도가 너무 오래돼 신뢰할 수 없습니다. 그 뒤로 Claude Code 상태줄이 갱신하지 않았습니다(VS Code 확장 안에서는 상태줄이 실행되지 않습니다). 터미널에서 Claude Code를 한 번 실행하면 갱신됩니다. 마지막 갱신 {0:MM-dd HH:mm}.
 Usage.Live	live	실시간
 Usage.WarningTip	Warning · below {0}% remaining	경고 · 잔여 {0}% 미만
 Usage.UpdatedAgo	{0} ago	{0} 전 갱신
@@ -76,8 +79,8 @@ Settings.NotifyVisibleOnly	Only sessions shown in the HUD	HUD에 표시 중인 �
 Settings.AutoResume	Resume automatically after a usage limit resets	사용량 한도 리셋 후 자동으로 이어서 진행
 Settings.ResumePromptTip	Message to send when resuming	재개할 때 보낼 메시지
 Settings.AutoResumeHint	Resumes a Claude or Codex conversation stopped by a usage limit once via the CLI, 1 minute after the reset. Only file edits are auto-approved (Claude acceptEdits, Codex workspace-write), and you have to reopen the VS Code conversation tab to see the progress. Limits that reset more than 30 minutes ago are left alone.	한도로 멈춘 Claude·Codex 대화를 리셋 1분 뒤 CLI로 한 번 이어 실행합니다. 파일 편집만 자동 허용되고(Claude acceptEdits, Codex workspace-write), 진행 내용은 VS Code 대화 탭을 다시 열어야 보입니다. 리셋 후 30분이 지난 한도는 건드리지 않습니다.
-Settings.ClaudeLink	Link real Claude limits (via status line)	Claude 실제 한도 연동 (상태줄 사용)
-Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다.
+Settings.ClaudeLink	Link real Claude limits (via status line, recommended)	Claude 실제 한도 연동 (상태줄 사용, 권장)
+Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
 Settings.ClaudeApi	Claude usage API (claude.ai, unofficial)	Claude 사용량 API (claude.ai, 비공식)
 Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키

@@ -30,6 +30,15 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var conversationTarget: ConversationTarget = .visualStudioCode {
         didSet { UserDefaults.standard.set(conversationTarget.rawValue, forKey: Self.conversationTargetKey) }
     }
+    /// Registers/unregisters the Claude Code statusLine link (default on; see ClaudeLimitLink).
+    @Published public var claudeLimitLinked: Bool = false {
+        didSet {
+            UserDefaults.standard.set(claudeLimitLinked, forKey: Self.claudeLinkKey)
+            guard claudeLimitLinked != ClaudeLimitLink.shared.isLinked else { return }
+            do { if claudeLimitLinked { try ClaudeLimitLink.shared.link() } else { try ClaudeLimitLink.shared.unlink() } }
+            catch { print("Claude limit link: \(error)") }
+        }
+    }
     /// True until the first discovery pass finishes, so the HUD can show a spinner
     /// instead of claiming there are no sessions.
     @Published public var isScanning = true
@@ -61,6 +70,7 @@ public final class AgentHudViewModel: ObservableObject {
     private static let openCodeWorkspaceKey = "hud.openCodeWorkspaceID"
     private static let conversationTargetKey = "hud.conversationTarget"
     private static let activeWindowKey = "hud.activeWindowMinutes"
+    private static let claudeLinkKey = "hud.claudeLimitLink"
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -109,6 +119,24 @@ public final class AgentHudViewModel: ObservableObject {
         if let raw = UserDefaults.standard.string(forKey: Self.conversationTargetKey),
            let target = ConversationTarget(rawValue: raw) {
             self.conversationTarget = target
+        }
+        // Migration: first run / upgrade with no stored choice links the statusLine once,
+        // silently. `didSet` does not fire for assignments made inside this initializer,
+        // so the persisted key and the actual link/unlink call are both done explicitly
+        // here instead of relying on the `claudeLimitLinked` property observer. A failed
+        // install leaves the key unset so it retries next launch instead of being stuck
+        // "declined".
+        if UserDefaults.standard.object(forKey: Self.claudeLinkKey) == nil {
+            if ClaudeLimitLink.shared.linkQuietly() || ClaudeLimitLink.shared.isLinked {
+                self.claudeLimitLinked = true
+                UserDefaults.standard.set(true, forKey: Self.claudeLinkKey)
+            }
+        } else {
+            let linked = UserDefaults.standard.bool(forKey: Self.claudeLinkKey)
+            self.claudeLimitLinked = linked
+            if linked && !ClaudeLimitLink.shared.isLinked {
+                ClaudeLimitLink.shared.linkQuietly()
+            }
         }
     }
 
@@ -327,18 +355,17 @@ public final class AgentHudViewModel: ObservableObject {
 
         let claude = sessions.filter { $0.agentType == .claudeCode }
         if !claude.isEmpty {
+            // statusLine (default, official CLI value) vs. the sessionKey API (not ported to
+            // macOS, so always .none) -- see ClaudeLimitPolicy for the selection/staleness rules.
+            let lastActivity = claude.map(\.lastActivityAt).max()
+            let pick = ClaudeLimitPolicy.pick(statusLine: ClaudeLimitLink.shared.readSnapshot(), api: .none,
+                                              now: now, lastClaudeActivity: lastActivity)
             let tokens5h = claude.reduce(Int64(0)) { $0 + $1.tokens5h }
             let tokensWeek = claude.reduce(Int64(0)) { $0 + $1.tokensWeek }
-            rows.append(UsageRow(
-                id: "claude-5h", agent: .claudeCode, label: "5h", usedPercent: nil,
-                text: HudTheme.formatPattern(loc.string("Usage.Tokens"), [HudTheme.formatTokens(tokens5h)]),
-                pacePercent: nil
-            ))
-            rows.append(UsageRow(
-                id: "claude-week", agent: .claudeCode, label: "week", usedPercent: nil,
-                text: HudTheme.formatPattern(loc.string("Usage.Tokens"), [HudTheme.formatTokens(tokensWeek)]),
-                pacePercent: nil
-            ))
+            rows.append(claudeLimitRow(id: "claude-5h", label: "5h", window: pick.fiveHour, stale: pick.fiveHourStale,
+                                       pickUpdatedAt: pick.updatedAt, tokens: tokens5h, now: now))
+            rows.append(claudeLimitRow(id: "claude-week", label: "week", window: pick.sevenDay, stale: pick.sevenDayStale,
+                                       pickUpdatedAt: pick.updatedAt, tokens: tokensWeek, now: now))
         }
 
         // Live server data wins; local logs only fill in when the API is unavailable.
@@ -401,6 +428,28 @@ public final class AgentHudViewModel: ObservableObject {
             for index in rows.indices { rows[index].pacePercent = nil }
         }
         return rows
+    }
+
+    /// No window (neither source has data) falls back to the token-budget estimate; a stale
+    /// window shows the last known value marked "Stale" (or, once that window's `resetsAt`
+    /// has passed and the number is meaningless, just "Stale"); otherwise a real gauge.
+    private func claudeLimitRow(id: String, label: String, window: LimitWindow?, stale: Bool,
+                                 pickUpdatedAt: Date, tokens: Int64, now: Date) -> UsageRow {
+        let loc = Localiz.current
+        guard let window else {
+            return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: nil,
+                            text: HudTheme.formatPattern(loc.string("Usage.Tokens"), [HudTheme.formatTokens(tokens)]),
+                            pacePercent: nil)
+        }
+        if stale {
+            let expired = window.resetsAt.map { $0 <= now } ?? false
+            let text = expired ? loc.string("Usage.Stale")
+                : HudTheme.formatPattern(loc.string("Usage.StaleValue"), [window.usedPercent])
+            let tip = HudTheme.formatPattern(loc.string("Usage.StaleTip"), [pickUpdatedAt])
+            return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: nil,
+                            text: text, pacePercent: nil, textToolTip: tip)
+        }
+        return codexRow(agent: .claudeCode, label: label, window: window, now: now)
     }
 
     private func codexRow(agent: AgentType, label: String, window: LimitWindow,

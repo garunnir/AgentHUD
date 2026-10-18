@@ -57,9 +57,11 @@ rollout의 `token_count.rate_limits`에서 primary/secondary window를 읽습니
 
 서버 제한은 로컬 세션 metadata에 없으므로 다음 소스를 사용합니다.
 
-- claude.ai usage API: WebView2를 통해 5분마다 조회합니다. session key는 Windows DPAPI로 암호화하여 `%LOCALAPPDATA%\AgentHud`에 저장합니다. 비공식 endpoint이므로 변경될 수 있습니다.
-- CLI status line link: `~/.claude/settings.json`에 status line script를 등록하여 `rate_limits`를 받습니다. VS Code 확장에는 적용되지 않습니다.
-- 둘 다 없으면 HUD가 발견한 로그의 input, output, cache creation token 합계를 표시합니다.
+- **CLI status line link (기본값)**: `~/.claude/settings.json`에 status line script를 등록해 `rate_limits`를 `claude-limits.json`으로 받습니다. 처음 실행할 때 한 번 조용히 연동하고(`ClaudeLimitLink.LinkQuietly`), 그 선택은 `placement.json`의 `ClaudeLinkEnabled`에 저장됩니다. 기존 status line이 있으면 `claude-statusline-inner.txt`에 보존해 이어서 실행(체이닝)하고, 연동을 해제하면 복원합니다. VS Code 확장 안에서는 status line이 실행되지 않으므로 그 경로로만 작업하면 값이 멈춥니다.
+- **claude.ai usage API (선택, opt-in)**: WebView2를 통해 5분마다 조회합니다. sessionKey는 Windows DPAPI로 암호화하여 `%LOCALAPPDATA%\AgentHud`에 저장합니다. 비공식 endpoint이므로 변경될 수 있고, `ClaudeApiEnabled`가 꺼져 있으면 저장된 키가 있어도 조회하지 않습니다(WebView2도 생성하지 않음). 주로 status line이 실행되지 않는 VS Code 확장 사용자를 위한 보조 경로입니다.
+- **선택 정책**: `ClaudeLimitPolicy.Pick`(`src/AgentHud.Core/ClaudeLimits.cs`)이 두 소스 중 "더 신선하고 유효한" 쪽을 고릅니다. status line은 12시간, API는 30분이 지나면 오래된 것으로 봅니다. status line은 추가로, 기록 이후 Claude 세션이 더 움직였다면(활동 시각이 `UpdatedAt + 15분`보다 뒤) 오래된 것으로 봅니다 — status line이 실행되지 않는 곳(VS Code 확장)에서 작업했다는 뜻이기 때문입니다. 두 소스의 창은 섞지 않고(계정이 다를 수 있음), 창별로 `resets_at`이 이미 지났으면 그 창만 따로 무효화합니다. 동률이면 공식 CLI 값인 status line이 이깁니다.
+- 선택된 값이 오래됐으면 마지막으로 알려진 숫자에 `Usage.StaleValue`("42% · Stale")로 표시를 붙이고, 그 창의 `resets_at`마저 지나 숫자가 무의미해졌으면 `Usage.Stale`("Stale")만 보여줍니다. 두 소스 모두 값이 없으면 HUD가 발견한 로그의 input, output, cache creation token 합계를 표시합니다.
+- macOS는 같은 `claude-limits.json` 규약을 `~/Library/Application Support/AgentHud`의 `claude-statusline.sh`로 구현합니다(`ClaudeLimitLink.swift`). sessionKey API는 macOS에 포팅하지 않았습니다.
 
 ## 자동 재개
 

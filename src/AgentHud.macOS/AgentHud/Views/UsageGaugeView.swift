@@ -16,6 +16,8 @@ struct UsageRow: Identifiable, Equatable {
     var fromServer = false
     /// Remaining % that the amber warning line marks (<= 0 hides it).
     var warningPercent: Double = 0
+    /// Explains a text-only "Stale" value (why it's stale, last update time). nil = no tip.
+    var textToolTip: String? = nil
     private static let staleAfter: TimeInterval = 300
 
     var displayLabel: String {
@@ -71,7 +73,8 @@ struct UsageGaugeView: View {
                 .foregroundStyle(HudTheme.secondary)
                 .lineLimit(1)
                 .frame(width: timeColumnWidth, alignment: .trailing)
-                .allowsHitTesting(false)
+                .allowsHitTesting(row.textToolTip != nil)
+                .help(row.textToolTip ?? "")
         }
     }
 }
