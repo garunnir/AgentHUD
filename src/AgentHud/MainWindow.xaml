@@ -178,7 +178,7 @@
                 </Grid>
                 <TextBlock Text="{Binding BarText}" Foreground="White" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
               </Grid>
-              <TextBlock Grid.Column="2" Text="{Binding Text}" Foreground="#AEB8C6" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="2" Text="{Binding Text}" ToolTip="{Binding TextToolTip}" Foreground="#AEB8C6" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </Grid>
           </DataTemplate>
         </ItemsControl.ItemTemplate>

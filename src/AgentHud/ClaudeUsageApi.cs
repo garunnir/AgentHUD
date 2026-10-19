@@ -31,7 +31,21 @@ public sealed class ClaudeUsageApi : IDisposable
     }
 
     public bool HasKey => File.Exists(_keyPath);
-    public bool IsConfigured => HasKey && _orgId is not null;
+    public bool IsConfigured => Enabled && HasKey && _orgId is not null;
+    private bool _enabled;
+    // 고급/비공식 옵션 - 사용자가 명시적으로 켜야 함(opt-in). 꺼져 있으면 저장된 키가 있어도 WebView2를 띄우거나 조회하지 않는다
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value) return;
+            _enabled = value;
+            Interlocked.Increment(ref _credentialsVersion);
+            if (!value) { _latest = default; SetStatus("Api.Disabled"); Updated?.Invoke(); }
+            else _ = RefreshAsync();
+        }
+    }
     public string? OrgId
     {
         get => _orgId;
@@ -47,6 +61,8 @@ public sealed class ClaudeUsageApi : IDisposable
         }
     }
     public (LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At) Latest => _latest;
+    public ClaudeLimitSnapshot Snapshot => _latest.FiveHour is null && _latest.SevenDay is null
+        ? ClaudeLimitSnapshot.None : new(ClaudeLimitSource.UsageApi, _latest.FiveHour, _latest.SevenDay, _latest.At);
 
     public void SetKey(string? key)
     {
@@ -85,6 +101,7 @@ public sealed class ClaudeUsageApi : IDisposable
         bool IsCurrent() => credentialsVersion == Volatile.Read(ref _credentialsVersion);
         try
         {
+            if (!Enabled) { if (IsCurrent()) { _latest = default; SetStatus("Api.Disabled"); } return; }
             if (!HasKey || _orgId is null) { if (IsCurrent()) { _latest = default; SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); } return; }
             if (!Guid.TryParse(_orgId, out var org)) { if (IsCurrent()) { _latest = default; SetStatus("Api.OrgIdInvalid"); } return; }
             string key;

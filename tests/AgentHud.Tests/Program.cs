@@ -1,3 +1,4 @@
+using AgentHud;
 using AgentHud.Discovery;
 using AgentHud.Models;
 
@@ -233,6 +234,16 @@ try
         type = "attachment", sessionId = bgId, isSidechain = false,
         attachment = new { type = "queued_command", prompt = queuedNotice.Replace("bash3", "bash4") } }) + "\n");
     Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "queued_command attachment clears the background task");
+    await File.AppendAllTextAsync(bgTranscript,
+        BgLine("assistant", new[] { new { type = "tool_use", id = "m1", name = "Monitor", input = new { command = "watch", description = "delegated work" } } })
+        + BgLine("user", new[] { new { type = "tool_result", tool_use_id = "m1", content = "Monitor started (task monitor1, expires in 5m unless the source ends first)." } })
+        + BgLine("assistant", new[] { new { type = "text", text = "Waiting for the delegated task." } }));
+    var monitorWaiting = (await provider.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(monitorWaiting.HasBackgroundTasks && monitorWaiting.State == AgentState.Working,
+        "idle while Monitor waits for delegated work is shown as Working");
+    await File.AppendAllTextAsync(bgTranscript, BgLine("user", "<task-notification>\n<task-id>monitor1</task-id>\n<status>completed</status>\n</task-notification>"));
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks,
+        "Monitor task notification clears the delegated wait");
     var bgRegistry = new AgentSessionRegistry(new TestTimeProvider());
     bgRegistry.Replace([a]);
     bgRegistry.Replace([a with { State = AgentState.Idle, HasBackgroundTasks = true }]);
@@ -693,6 +704,65 @@ foreach (var invalid in new[]
     try { AgentHud.OpenCodeGoUsage.Parse(invalid, goFetched); }
     catch (Exception e) when (e is FormatException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException) { rejected = true; }
     Assert(rejected, "Go rejects invalid or unsupported response instead of showing a false allowance");
+}
+// Claude limit fixtures contain no real account data.
+{
+    var now = new DateTime(2026, 10, 18, 12, 0, 0, DateTimeKind.Utc);
+    string StatusJson(double five, DateTime fiveReset, double seven, DateTime sevenReset) =>
+        $"{{\"rate_limits\":{{\"five_hour\":{{\"used_percentage\":{five},\"resets_at\":{new DateTimeOffset(fiveReset).ToUnixTimeSeconds()}}}," +
+        $"\"seven_day\":{{\"used_percentage\":{seven},\"resets_at\":{new DateTimeOffset(sevenReset).ToUnixTimeSeconds()}}}}}}}";
+    AgentHud.ClaudeLimitSnapshot StatusLineAt(DateTime age, double five = 40, double seven = 20, DateTime? fiveReset = null, DateTime? sevenReset = null) =>
+        AgentHud.ClaudeLimitSnapshot.ParseStatusLine(StatusJson(five, fiveReset ?? now.AddHours(2), seven, sevenReset ?? now.AddDays(3)), age);
+    AgentHud.ClaudeLimitSnapshot ApiAt(DateTime age, double five = 40, double seven = 20) =>
+        new(AgentHud.ClaudeLimitSource.UsageApi, new LimitWindow(five, now.AddHours(2)), new LimitWindow(seven, now.AddDays(3)), age);
+
+    var parsed = AgentHud.ClaudeLimitSnapshot.ParseStatusLine(StatusJson(40, now.AddHours(2), 20, now.AddDays(3)), now);
+    Assert(parsed.FiveHour is { UsedPercent: 40 } && parsed.FiveHour.ResetsAt == now.AddHours(2).ToUniversalTime()
+        && parsed.SevenDay is { UsedPercent: 20 }, "ParseStatusLine maps both windows in UTC");
+
+    Assert(AgentHud.ClaudeLimitSnapshot.ParseStatusLine("{broken", now) == AgentHud.ClaudeLimitSnapshot.None, "ParseStatusLine rejects malformed JSON");
+    Assert(AgentHud.ClaudeLimitSnapshot.ParseStatusLine("{}", now) == AgentHud.ClaudeLimitSnapshot.None, "ParseStatusLine rejects JSON without rate_limits");
+    var missingReset = AgentHud.ClaudeLimitSnapshot.ParseStatusLine("{\"rate_limits\":{\"five_hour\":{\"used_percentage\":40},\"seven_day\":{\"used_percentage\":20,\"resets_at\":" + new DateTimeOffset(now.AddDays(3)).ToUnixTimeSeconds() + "}}}", now);
+    Assert(missingReset.FiveHour is null && missingReset.SevenDay is not null, "ParseStatusLine never reports a false 0% for a window missing resets_at");
+
+    var fresh = ClaudeLimitPolicy.Pick(StatusLineAt(now), AgentHud.ClaudeLimitSnapshot.None, now, null);
+    Assert(fresh.Source == AgentHud.ClaudeLimitSource.StatusLine && !fresh.FiveHourStale && !fresh.SevenDayStale, "Fresh statusLine with no API picks StatusLine without stale flags");
+
+    var apiFresher = ClaudeLimitPolicy.Pick(StatusLineAt(now.AddHours(-3)), ApiAt(now.AddMinutes(-10)), now, null);
+    Assert(apiFresher.Source == AgentHud.ClaudeLimitSource.UsageApi, "Fresher non-stale API beats an older statusLine");
+
+    var statusLineFresher = ClaudeLimitPolicy.Pick(StatusLineAt(now.AddMinutes(-10)), ApiAt(now.AddHours(-3)), now, null);
+    Assert(statusLineFresher.Source == AgentHud.ClaudeLimitSource.StatusLine, "A stale API falls back to the fresher statusLine");
+
+    var tie = ClaudeLimitPolicy.Pick(StatusLineAt(now), ApiAt(now), now, null);
+    Assert(tie.Source == AgentHud.ClaudeLimitSource.StatusLine, "Equal UpdatedAt ties in favor of the official statusLine");
+
+    var apiEmpty = ClaudeLimitPolicy.Pick(StatusLineAt(now), AgentHud.ClaudeLimitSnapshot.None, now, null);
+    Assert(apiEmpty.Source == AgentHud.ClaudeLimitSource.StatusLine && apiEmpty.FiveHour is not null && apiEmpty.SevenDay is not null,
+        "An empty/failed API does not hide the Claude rows when statusLine has data");
+
+    var oldNoActivity = ClaudeLimitPolicy.Pick(StatusLineAt(now.AddHours(-13)), AgentHud.ClaudeLimitSnapshot.None, now, null);
+    Assert(oldNoActivity.FiveHourStale && oldNoActivity.SevenDayStale && oldNoActivity.FiveHour is not null && oldNoActivity.SevenDay is not null,
+        "A statusLine over 12h old is stale but still shows the last known numbers");
+
+    var vsCodeCase = ClaudeLimitPolicy.Pick(StatusLineAt(now.AddDays(-2)), AgentHud.ClaudeLimitSnapshot.None, now, now.AddMinutes(-1));
+    Assert(vsCodeCase.FiveHourStale, "Claude activity newer than the statusLine snapshot marks it stale (VS Code extension case)");
+
+    var normalTerminalUse = ClaudeLimitPolicy.Pick(StatusLineAt(now.AddMinutes(-5)), AgentHud.ClaudeLimitSnapshot.None, now, now.AddMinutes(-3));
+    Assert(!normalTerminalUse.FiveHourStale, "Activity within the grace window of a fresh statusLine snapshot is not stale");
+
+    var perWindow = ClaudeLimitPolicy.Pick(StatusLineAt(now, fiveReset: now.AddMinutes(-1), sevenReset: now.AddDays(4)), AgentHud.ClaudeLimitSnapshot.None, now, null);
+    Assert(perWindow.FiveHourStale && !perWindow.SevenDayStale, "A window whose resets_at has passed is stale independently of the other window");
+
+    var apiOld = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, ApiAt(now.AddMinutes(-45)), now, now.AddMinutes(-1));
+    Assert(apiOld.FiveHourStale, "API values older than 30 minutes are stale");
+
+    var apiFreshWithActivity = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, ApiAt(now.AddMinutes(-5)), now, now.AddSeconds(-1));
+    Assert(!apiFreshWithActivity.FiveHourStale, "The activity rule only applies to statusLine, not the API source");
+
+    var neither = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, AgentHud.ClaudeLimitSnapshot.None, now, null);
+    Assert(neither.Source == AgentHud.ClaudeLimitSource.None && neither.FiveHour is null && neither.SevenDay is null,
+        "No data from either source falls back to None so the caller can use the token-budget estimate");
 }
 Console.WriteLine("All registry and discovery checks passed.");
 

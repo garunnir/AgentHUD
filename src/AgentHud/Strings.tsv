@@ -26,6 +26,9 @@ Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
 Usage.ResetHoursMinutes	{0}h {1}m	{0}시간 {1}분
 Usage.PaceTip	Recommended remaining {0:0}% (even pace)	권장 잔량 {0:0}% (균등 소비 기준)
+Usage.Stale	Stale	오래됨
+Usage.StaleValue	{0:0}% · Stale	{0:0}% · 오래됨
+Usage.StaleTip	The last known limit is too old to trust: the Claude Code status line has not reported since then (it does not run inside the VS Code extension). Run Claude Code in a terminal once to refresh it. Last updated {0:MM-dd HH:mm}.	마지막으로 알려진 한도가 너무 오래돼 신뢰할 수 없습니다. 그 뒤로 Claude Code 상태줄이 갱신하지 않았습니다(VS Code 확장 안에서는 상태줄이 실행되지 않습니다). 터미널에서 Claude Code를 한 번 실행하면 갱신됩니다. 마지막 갱신 {0:MM-dd HH:mm}.
 Resume.DefaultPrompt	Please continue the work that was interrupted by the usage limit.	사용량 한도로 중단됐던 작업을 이어서 진행해 주세요.
 Sound.Asterisk	Windows notification (Asterisk)	Windows 알림 (Asterisk)
 Sound.Exclamation	Windows warning (Exclamation)	Windows 경고 (Exclamation)
@@ -46,6 +49,7 @@ Api.RequestFailed	Request failed (HTTP {0}{1})	요청 실패 (HTTP {0}{1})
 Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못함
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
+Api.Disabled	Off (advanced option)	꺼짐 (고급 옵션)
 Settings.Title	Settings	설정
 Settings.Tab.General	General	일반
 Settings.Tab.Alerts	Alerts	알림
@@ -67,14 +71,16 @@ Settings.NotifyVisibleOnly	Only sessions shown in the HUD	HUD에 표시 중인 �
 Settings.AutoResume	Resume automatically after a usage limit resets	사용량 한도 리셋 후 자동으로 이어서 진행
 Settings.ResumePromptTip	Message to send when resuming	재개할 때 보낼 메시지
 Settings.AutoResumeHint	Resumes a Claude or Codex conversation stopped by a usage limit once via the CLI, 1 minute after the reset. Only file edits are auto-approved (Claude acceptEdits, Codex workspace-write), and you have to reopen the VS Code conversation tab to see the progress. Limits that reset more than 30 minutes ago are left alone.	한도로 멈춘 Claude·Codex 대화를 리셋 1분 뒤 CLI로 한 번 이어 실행합니다. 파일 편집만 자동 허용되고(Claude acceptEdits, Codex workspace-write), 진행 내용은 VS Code 대화 탭을 다시 열어야 보입니다. 리셋 후 30분이 지난 한도는 건드리지 않습니다.
-Settings.ClaudeLink	Link real Claude limits (via status line)	Claude 실제 한도 연동 (상태줄 사용)
-Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다.
-Settings.ClaudeApi	Claude usage API (claude.ai, unofficial)	Claude 사용량 API (claude.ai, 비공식)
+Settings.ClaudeLink	Link real Claude limits (via status line, recommended)	Claude 실제 한도 연동 (상태줄 사용, 권장)
+Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
+Settings.ClaudeApi	Claude usage API (advanced — for VS Code extension users)	Claude 사용량 API (고급 — VS Code 확장 사용자용)
+Settings.ClaudeApiEnable	Use the claude.ai usage API (advanced, unofficial)	claude.ai 사용량 API 사용 (고급, 비공식)
+Settings.ClaudeApiWarn	Uses your claude.ai web session cookie. Unofficial and sensitive — turn this on only if you need it.	claude.ai 웹 세션 쿠키를 사용합니다. 비공식이며 민감한 정보이므로 필요할 때만 켜세요.
 Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키
 Settings.Save	Save	저장
 Settings.DeleteKey	Delete key	키 삭제
-Settings.ClaudeApiHint	In claude.ai DevTools, copy the UUID from /api/organizations/{UUID}/... in the Network tab and sessionKey from Application → Cookies. The key is encrypted so only the current user on this PC can decrypt it, and it is used only to fetch usage every 5 minutes. Enter it again when it expires.	claude.ai 개발자도구 → 네트워크의 /api/organizations/{UUID}/... 에서 UUID를, Application → Cookies에서 sessionKey를 복사하세요. 키는 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장하며 5분마다 사용량만 조회합니다. 만료되면 다시 넣어야 합니다.
+Settings.ClaudeApiHint	In claude.ai DevTools, copy the UUID from /api/organizations/{UUID}/... in the Network tab and sessionKey from Application → Cookies. The key is encrypted so only the current user on this PC can decrypt it, and it is used only to fetch usage every 5 minutes. Enter it again when it expires. Intended for VS Code extension users, since the status line above does not run there. Agent HUD uses whichever of the status line and this API has the fresher valid value.	claude.ai 개발자도구 → 네트워크의 /api/organizations/{UUID}/... 에서 UUID를, Application → Cookies에서 sessionKey를 복사하세요. 키는 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장하며 5분마다 사용량만 조회합니다. 만료되면 다시 넣어야 합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
 Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows only the total, no bar)	연동하지 않을 때 Claude 사용량 예산 (백만 토큰, 0이면 막대 없이 합계만)
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간

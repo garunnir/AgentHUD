@@ -240,24 +240,39 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<UsageRow> UsageRows { get; } = [];
     // Claude는 서버 한도를 로컬에서 알 수 없어, 사용자가 정한 토큰 예산(백만 단위, 0이면 막대 없이 합계만)을 기준으로 함
     private readonly ClaudeLimitLink _claudeLink = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
-    // 켜면 Claude Code 상태줄 스크립트를 등록해 서버 기준 한도를 받아옴(~/.claude/settings.json 수정)
+    // 켜면 Claude Code 상태줄 스크립트를 등록해 서버 기준 한도를 받아옴(~/.claude/settings.json 수정). 기본값(default)
+    // 사용자가 명시적으로 끈 것(false)과 "아직 물어본 적 없음"(null)을 구분해야 해서 선택 여부는 placement.json에 별도 저장
+    private bool? _claudeLinkChoice;
     public bool ClaudeLimitLinked
     {
         get => _claudeLink.IsLinked;
         set
         {
-            if (_claudeLink.IsLinked == value) return;
-            try { if (value) _claudeLink.Link(); else _claudeLink.Unlink(); }
+            if (_claudeLink.IsLinked == value) { _claudeLinkChoice = value; return; }
+            try { if (value) _claudeLink.Link(); else _claudeLink.Unlink(); _claudeLinkChoice = value; }
             catch (Exception e) { MessageBox.Show(this, e.Message, Loc.T("Error.ClaudeLinkFailed")); }
             PropertyChanged?.Invoke(this, new(nameof(ClaudeLimitLinked)));
             UpdateUsage(_registry.GetAllAgents());
         }
     }
-    // claude.ai 사용량 API 연동(sessionKey는 DPAPI로 암호화 저장). 5분마다 조회
+    // claude.ai 사용량 API 연동(sessionKey는 DPAPI로 암호화 저장). 고급/비공식 옵션이라 명시적으로 켜야 하고(opt-in),
+    // 5분마다 조회. VS Code 확장처럼 statusLine이 실행되지 않는 환경을 쓰는 사람을 위한 보조 경로
     private readonly ClaudeUsageApi _claudeApi = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
     public string ClaudeOrgId { get => _claudeApi.OrgId ?? ""; set { _claudeApi.OrgId = value; PropertyChanged?.Invoke(this, new(nameof(ClaudeOrgId))); } }
     public string ClaudeApiStatus => _claudeApi.Status;
     public bool ClaudeApiHasKey => _claudeApi.HasKey;
+    public bool ClaudeApiEnabled
+    {
+        get => _claudeApi.Enabled;
+        set
+        {
+            if (_claudeApi.Enabled == value) return;
+            _claudeApi.Enabled = value;
+            PropertyChanged?.Invoke(this, new(nameof(ClaudeApiEnabled)));
+            PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
+            UpdateUsage(_registry.GetAllAgents());
+        }
+    }
     public void SetClaudeSessionKey(string? key)
     {
         try { _claudeApi.SetKey(key); }
@@ -285,16 +300,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var claude = all.Where(x => x.AgentType == AgentType.ClaudeCode).ToArray();
         if (claude.Length > 0)
         {
-            // API를 설정했으면 그 세션만 신뢰한다. 인증 실패/계정 불일치 때 상태줄이나 로컬 추정치로 대체하면
-            // 다른 계정의 사용량처럼 보일 수 있으므로, 유효한 API 응답을 받기 전까지 Claude 행을 숨긴다.
-            var (fiveHour, sevenDay) = _claudeApi.IsConfigured
-                ? (_claudeApi.Latest.FiveHour, _claudeApi.Latest.SevenDay)
-                : _claudeLink.ReadLimits();
-            if (!_claudeApi.IsConfigured || fiveHour is not null || sevenDay is not null)
-            {
-                rows.Add(fiveHour is { } five ? CodexRow(AgentType.ClaudeCode, "5h", five, now) : ClaudeRow("5h", claude.Sum(x => x.Tokens5h), _claudeBudget5h));
-                rows.Add(sevenDay is { } seven ? CodexRow(AgentType.ClaudeCode, UsageRow.Week, seven, now) : ClaudeRow(UsageRow.Week, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek));
-            }
+            // statusLine(기본, 공식 CLI 값)과 sessionKey API(선택, 비공식) 중 더 신선하고 유효한 쪽을 쓴다.
+            // 정책은 ClaudeLimitPolicy.Pick에 있다(두 소스를 섞지 않고, 창별 resets_at도 따로 확인).
+            var lastActivity = claude.Max(x => x.LastActivityAt).ToUniversalTime();
+            var pick = ClaudeLimitPolicy.Pick(_claudeLink.ReadSnapshot(), _claudeApi.Snapshot, now, lastActivity);
+            rows.Add(ClaudeLimitRow("5h", pick.FiveHour, pick.FiveHourStale, pick.UpdatedAt, claude.Sum(x => x.Tokens5h), _claudeBudget5h, now));
+            rows.Add(ClaudeLimitRow(UsageRow.Week, pick.SevenDay, pick.SevenDayStale, pick.UpdatedAt, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek, now));
         }
         // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
         if (all.Any(x => x.AgentType == AgentType.Codex))
@@ -328,6 +339,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static UsageRow ClaudeRow(string label, long tokens, double budgetM) =>
         budgetM <= 0 ? new(AgentType.ClaudeCode, label, null, Loc.F("Usage.Tokens", FormatTokens(tokens)))
         : new(AgentType.ClaudeCode, label, Math.Min(100, tokens / (budgetM * 1_000_000) * 100), $"{FormatTokens(tokens)}/{budgetM:0.#}M");
+    // 한도 창이 없으면(두 소스 모두 값 없음) 토큰 예산 추정치로, 있지만 오래됐으면 "Stale"로(창의 ResetsAt마저
+    // 지났으면 숫자 없이 "Stale"만), 아니면 실제 게이지로
+    private static UsageRow ClaudeLimitRow(string label, LimitWindow? window, bool stale, DateTime updatedAtUtc, long tokens, double budgetM, DateTime now) =>
+        window is null ? ClaudeRow(label, tokens, budgetM)
+        : !stale ? CodexRow(AgentType.ClaudeCode, label, window, now)
+        : new(AgentType.ClaudeCode, label, null, window.ResetsAt <= now ? Loc.T("Usage.Stale") : Loc.F("Usage.StaleValue", window.UsedPercent))
+            { TextToolTip = Loc.F("Usage.StaleTip", updatedAtUtc.ToLocalTime()) };
     private static UsageRow CodexRow(AgentType agent, string label, LimitWindow window, DateTime now)
     {
         var used = window.PercentAt(now);
@@ -456,19 +474,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
+    }
+    // 기존 사용자 마이그레이션: placement.json에 선택 기록이 없으면(처음 실행 또는 이전 버전 업그레이드) statusLine을
+    // 조용히 한 번 연동(기본값, 실패해도 다음 실행에서 재시도). sessionKey API는 이미 키+Org ID를 설정해 둔
+    // 사용자만 자동으로 opt-in 상태로 넘어가고, 그 외에는 꺼진 채로 시작한다(새로운 고급 옵션이므로)
+    private void ApplyClaudeLimitDefaults(Placement? p)
+    {
+        _claudeApi.Enabled = p?.ClaudeApiEnabled ?? (_claudeApi.HasKey && !string.IsNullOrWhiteSpace(ClaudeOrgId));
+        if (p?.ClaudeLinkEnabled is { } linked) { if (linked && !_claudeLink.IsLinked) _claudeLink.LinkQuietly(); }
+        else if (!_claudeLink.IsLinked && _claudeLink.LinkQuietly()) _claudeLinkChoice = true;
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null);
 }
 
 
 // 하단 사용량 한 줄. UsedPercent가 null이면 막대 없이 텍스트만
 public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPercent, string Text, double? PacePercent = null)
 {
+    // "Stale"(오래됨) 표시에 왜 그런지 설명하는 말풍선. null이면 기본 BarToolTip만 보임
+    public string? TextToolTip { get; init; }
     // 권장 잔량 눈금 위치(막대를 PaceLeft:PaceRight로 분할). 값이 없으면 눈금을 숨김
     public System.Windows.GridLength PaceLeft => new(PacePercent ?? 0, System.Windows.GridUnitType.Star);
     public System.Windows.GridLength PaceRight => new(100 - (PacePercent ?? 0), System.Windows.GridUnitType.Star);

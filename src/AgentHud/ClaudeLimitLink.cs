@@ -13,7 +13,7 @@ public sealed class ClaudeLimitLink
     private const string InnerName = "claude-statusline-inner.txt";
     private readonly string _dir;
     private readonly string _settingsPath;
-    private (long Length, DateTime Modified, (LimitWindow? FiveHour, LimitWindow? SevenDay) Limits)? _cached;
+    private (long Length, DateTime Modified, ClaudeLimitSnapshot Snapshot)? _cached;
 
     public ClaudeLimitLink(string home, string dataDirectory)
     {
@@ -47,6 +47,13 @@ public sealed class ClaudeLimitLink
         WriteSettings(settings);
     }
 
+    // 첫 실행 시 조용히 한 번 시도하는 용도 - 실패해도 오류창을 띄우지 않고, 다음 실행에서 다시 시도한다
+    public bool LinkQuietly()
+    {
+        try { Link(); return true; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return false; }
+    }
+
     public void Unlink()
     {
         var settings = ReadSettings();
@@ -61,30 +68,21 @@ public sealed class ClaudeLimitLink
         WriteSettings(settings);
     }
 
-    public (LimitWindow? FiveHour, LimitWindow? SevenDay) ReadLimits() => ReadScriptLimits().Limits;
-
-    private ((LimitWindow? FiveHour, LimitWindow? SevenDay) Limits, DateTime At) ReadScriptLimits()
+    public ClaudeLimitSnapshot ReadSnapshot()
     {
         try
         {
             var info = new FileInfo(Path.Combine(_dir, LimitsName));
-            if (!info.Exists) return ((null, null), DateTime.MinValue);
-            if (_cached is { } c && c.Length == info.Length && c.Modified == info.LastWriteTimeUtc) return (c.Limits, c.Modified);
+            if (!info.Exists) return ClaudeLimitSnapshot.None;
+            if (_cached is { } c && c.Length == info.Length && c.Modified == info.LastWriteTimeUtc) return c.Snapshot;
             using var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var json = JsonDocument.Parse(stream);
-            var limits = (Window(json.RootElement, "five_hour"), Window(json.RootElement, "seven_day"));
-            _cached = (info.Length, info.LastWriteTimeUtc, limits);
-            return (limits, info.LastWriteTimeUtc);
+            using var reader = new StreamReader(stream);
+            var snapshot = ClaudeLimitSnapshot.ParseStatusLine(reader.ReadToEnd(), info.LastWriteTimeUtc);
+            _cached = (info.Length, info.LastWriteTimeUtc, snapshot);
+            return snapshot;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return ((null, null), DateTime.MinValue); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return ClaudeLimitSnapshot.None; }
     }
-
-    private static LimitWindow? Window(JsonElement root, string name) =>
-        root.TryGetProperty("rate_limits", out var limits) && limits.ValueKind == JsonValueKind.Object
-        && limits.TryGetProperty(name, out var w) && w.ValueKind == JsonValueKind.Object
-        && w.TryGetProperty("used_percentage", out var used) && used.ValueKind == JsonValueKind.Number
-        && w.TryGetProperty("resets_at", out var resets) && resets.TryGetInt64(out var seconds)
-            ? new LimitWindow(used.GetDouble(), DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime) : null;
 
     private JsonObject ReadSettings() =>
         File.Exists(_settingsPath) ? JsonNode.Parse(File.ReadAllText(_settingsPath), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject ?? new() : new();
