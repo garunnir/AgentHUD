@@ -202,13 +202,13 @@ public sealed class ClaudeCodeProvider : IAgentProvider
     }
 
     // Background Bash / Agent tasks keep the session busy after the turn ends; a task-notification for the same id marks them finished.
-    private static readonly Regex BackgroundStarted = new(@"running in background with ID: (\w+)|Async agent launched[\s\S]*?agentId: (\w+)", RegexOptions.Compiled);
+    private static readonly Regex BackgroundStarted = new(@"running in background with ID: (\w+)|Async agent launched[\s\S]*?agentId: (\w+)|Monitor started \(task (\w+)", RegexOptions.Compiled);
     private static readonly Regex TaskFinished = new(@"<task-id>\s*([^<\s]+)\s*</task-id>", RegexOptions.Compiled);
     private static readonly TimeSpan BackgroundWindow = TimeSpan.FromHours(1);
     // Only results of calls that really started a background task count; text that merely quotes the launch message (logs, pasted output) must not.
     private static bool IsBackgroundCall(JsonElement block) => GetString(block, "name") switch
     {
-        "Agent" or "Task" => true,
+        "Agent" or "Task" or "Monitor" => true,
         "Bash" or "PowerShell" => block.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object
             && input.TryGetProperty("run_in_background", out var flag) && flag.ValueKind == JsonValueKind.True,
         _ => false
@@ -230,7 +230,7 @@ public sealed class ClaudeCodeProvider : IAgentProvider
             if (GetString(block, "type") != "tool_result") { Finished(BlockText(block)); continue; }
             if (GetString(block, "tool_use_id") is { } callId && calls.Contains(callId) && BlockText(block) is { } text
                 && BackgroundStarted.Match(text) is { Success: true } started)
-                tasks[started.Groups[1].Success ? started.Groups[1].Value : started.Groups[2].Value] = at;
+                tasks[started.Groups.Cast<Group>().Skip(1).First(x => x.Success).Value] = at;
         }
     }
     private static string? BlockText(JsonElement block)

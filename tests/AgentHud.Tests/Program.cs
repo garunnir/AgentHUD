@@ -234,6 +234,16 @@ try
         type = "attachment", sessionId = bgId, isSidechain = false,
         attachment = new { type = "queued_command", prompt = queuedNotice.Replace("bash3", "bash4") } }) + "\n");
     Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks, "queued_command attachment clears the background task");
+    await File.AppendAllTextAsync(bgTranscript,
+        BgLine("assistant", new[] { new { type = "tool_use", id = "m1", name = "Monitor", input = new { command = "watch", description = "delegated work" } } })
+        + BgLine("user", new[] { new { type = "tool_result", tool_use_id = "m1", content = "Monitor started (task monitor1, expires in 5m unless the source ends first)." } })
+        + BgLine("assistant", new[] { new { type = "text", text = "Waiting for the delegated task." } }));
+    var monitorWaiting = (await provider.DiscoverAsync(CancellationToken.None)).Single();
+    Assert(monitorWaiting.HasBackgroundTasks && monitorWaiting.State == AgentState.Working,
+        "idle while Monitor waits for delegated work is shown as Working");
+    await File.AppendAllTextAsync(bgTranscript, BgLine("user", "<task-notification>\n<task-id>monitor1</task-id>\n<status>completed</status>\n</task-notification>"));
+    Assert(!(await provider.DiscoverAsync(CancellationToken.None)).Single().HasBackgroundTasks,
+        "Monitor task notification clears the delegated wait");
     var bgRegistry = new AgentSessionRegistry(new TestTimeProvider());
     bgRegistry.Replace([a]);
     bgRegistry.Replace([a with { State = AgentState.Idle, HasBackgroundTasks = true }]);
