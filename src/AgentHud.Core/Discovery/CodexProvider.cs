@@ -67,6 +67,7 @@ public sealed class CodexProvider : IAgentProvider
                     var pendingAsyncQuestion = cached is not null && file.Length >= cached.Length && cached.PendingAsyncQuestion;
                     var rateLimitReset = cached is not null && file.Length >= cached.Length ? cached.Session.RateLimitResetAt : null;
                     var limitWindowReset = cached is not null && file.Length >= cached.Length ? cached.LimitWindowReset : null;
+                    var userApproves = cached is null || file.Length < cached.Length || cached.UserApproves;
                     // Windows may retain LastWriteTime while the writer keeps its handle open.
                     // Inspect a bounded tail when length changes, and use event timestamps.
                     await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
@@ -87,6 +88,7 @@ public sealed class CodexProvider : IAgentProvider
                                 session = session with { LastActivityAt = time };
                                 if (!item.TryGetProperty("payload", out var body)) continue;
                                 var kind = (GetString(item, "type"), GetString(body, "type"));
+                                if (ApprovalSettings(item, body) is { } settings) userApproves = UserApproves(settings);
                                 if (kind is ("event_msg", "token_count"))
                                 {
                                     limitWindowReset = ExhaustedWindowReset(body) ?? limitWindowReset;
@@ -101,7 +103,7 @@ public sealed class CodexProvider : IAgentProvider
                                     && GetString(body, "name") is "request_user_input" or "functions.request_user_input";
                                 var isAsyncQuestion = kind is ("response_item", "function_call" or "custom_tool_call")
                                     && GetString(body, "name") is "request_user_input_async" or "functions.request_user_input_async";
-                                var isApproval = kind is ("response_item", "function_call" or "custom_tool_call") && RequestsApproval(body);
+                                var isApproval = userApproves && kind is ("response_item", "function_call" or "custom_tool_call") && RequestsApproval(body);
                                 var isAnswer = kind is ("response_item", "function_call_output" or "custom_tool_call_output")
                                     && pendingQuestion is not null && GetString(body, "call_id") == pendingQuestion;
                                 var state = kind switch
@@ -163,7 +165,7 @@ public sealed class CodexProvider : IAgentProvider
                         catch (JsonException) { }
                     }
                     if (session.LastActivityAt == DateTime.MinValue) session = session with { LastActivityAt = file.LastWriteTimeUtc };
-                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion, limitWindowReset, pendingApprovals, pendingApprovalWaits);
+                    cached = new(file.Length, file.LastWriteTimeUtc, session, pendingQuestion, pendingAsyncQuestion, limitWindowReset, pendingApprovals, pendingApprovalWaits, userApproves);
                     _cache[path] = cached;
                 }
                 var now = DateTime.UtcNow;
@@ -188,6 +190,16 @@ public sealed class CodexProvider : IAgentProvider
         foreach (var path in _cache.Keys.Where(path => !seen.Contains(path)).ToArray()) _cache.Remove(path);
         return result;
     }
+    // turn_context payload 또는 thread_settings_applied.thread_settings (Codex Work 2026-10-19 확인)
+    private static JsonElement? ApprovalSettings(JsonElement item, JsonElement body)
+    {
+        var settings = GetString(item, "type") == "turn_context" ? body
+            : GetString(body, "type") == "thread_settings_applied" && body.TryGetProperty("thread_settings", out var nested) ? nested : default;
+        return GetString(settings, "approval_policy") is not null || GetString(settings, "approvals_reviewer") is not null ? settings : null;
+    }
+    // approvals_reviewer=auto_review면 가디언이 자동 심사하고, approval_policy=never면 묻지 않음 → 사용자 승인 대기 아님
+    private static bool UserApproves(JsonElement settings)
+        => GetString(settings, "approval_policy") != "never" && GetString(settings, "approvals_reviewer") is null or "user";
     // Approval is inferred from the requested sandbox mode until the matching tool output.
     private static bool RequestsApproval(JsonElement body)
     {
@@ -224,7 +236,7 @@ public sealed class CodexProvider : IAgentProvider
         var match = System.Text.RegularExpressions.Regex.Match(text, @"(?:^|\n)Script running with cell ID ([^\s]+)");
         return match.Success ? "cell:" + match.Groups[1].Value : null;
     }
-    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion, DateTime? LimitWindowReset, HashSet<string> PendingApprovals, Dictionary<string, string> PendingApprovalWaits);
+    private sealed record CachedSession(long Length, DateTime Modified, AgentSession Session, string? PendingQuestion, bool PendingAsyncQuestion, DateTime? LimitWindowReset, HashSet<string> PendingApprovals, Dictionary<string, string> PendingApprovalWaits, bool UserApproves);
     // 리셋 후 이 시간 동안은 재개를 기다리는 세션으로 표시
     public static readonly TimeSpan LimitGrace = TimeSpan.FromMinutes(30);
     // task_complete 등의 error.codex_error_info가 usage_limit_exceeded면 그 문구

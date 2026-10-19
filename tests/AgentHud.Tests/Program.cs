@@ -384,6 +384,24 @@ try
     await AppendEvent("turn_aborted");
     live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
     Assert(!live.IsActive && live.State == AgentState.Stopped, "aborted turn stops");
+    // Auto-review(가디언)나 approval_policy=never는 사용자에게 묻지 않음
+    async Task AppendRaw(string type, object payload) => await File.AppendAllTextAsync(livePath, System.Text.Json.JsonSerializer.Serialize(new {
+        timestamp = DateTime.UtcNow.ToString("O"), type, payload }) + "\n");
+    await AppendEvent("task_started");
+    await AppendRaw("turn_context", new { approval_policy = "on-request", approvals_reviewer = "auto_review" });
+    await AppendResponse(new { type = "custom_tool_call", name = "exec", call_id = "auto-reviewed", input = "await tools.exec_command({sandbox_permissions: 'require_escalated'});" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Working, "auto-reviewed escalation does not wait for user approval");
+    live = (await new CodexProvider(testHome).DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Working, "auto-review setting is read on startup");
+    await AppendRaw("event_msg", new { type = "thread_settings_applied", thread_settings = new { approval_policy = "never", approvals_reviewer = "user" } });
+    await AppendResponse(new { type = "function_call", name = "exec_command", call_id = "never-policy", arguments = "{\"sandbox_permissions\":\"require_escalated\"}" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.Working, "never policy does not wait for approval");
+    await AppendRaw("turn_context", new { approval_policy = "on-request", approvals_reviewer = "user" });
+    await AppendResponse(new { type = "function_call", name = "exec_command", call_id = "user-review", arguments = "{\"sandbox_permissions\":\"require_escalated\"}" });
+    live = (await codex.DiscoverAsync(CancellationToken.None)).Single(x => x.Id == "codex:live");
+    Assert(live.State == AgentState.WaitingForApproval, "user reviewer waits for approval");
 }
 finally { Directory.Delete(testHome, recursive: true); }
 var memoPath = Path.Combine(Path.GetTempPath(), "AgentHud-memos-" + Guid.NewGuid().ToString("N") + ".json");
