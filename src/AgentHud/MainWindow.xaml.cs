@@ -325,10 +325,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             rows.Add(CodexRow(AgentType.OpenCode, UsageRow.Month, go.Month, now) with { PacePercent = null });
         }
         else if (!string.IsNullOrEmpty(OpenCodeWorkspaceId)) rows.Add(new(AgentType.OpenCode, "Go", null, OpenCodeGoStatus));
-        // 주간 사용량이 이미 권장량을 넘었으면 5h 권장 눈금은 숨김(주간 눈금은 유지)
-        for (var i = 0; i < rows.Count; i++)
-            if (rows[i] is { Label: "5h" } five && rows.Any(w => w.AgentType == five.AgentType && w.Label == UsageRow.Week && w.PacePercent is { } p && w.Value < p))
-                rows[i] = five with { PacePercent = null };
         for (var i = 0; i < rows.Count; i++)
         {
             if (i >= UsageRows.Count) UsageRows.Add(rows[i]);
