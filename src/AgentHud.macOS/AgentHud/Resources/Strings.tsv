@@ -48,13 +48,15 @@ Api.NotConfigured	Not configured	미설정
 Api.OrgIdRequired	Organization ID required	Organization ID 필요
 Api.OrgIdInvalid	Invalid Organization ID format	Organization ID 형식 오류
 Api.KeyUnreadable	Can't read the saved key. Enter it again	저장된 키를 읽을 수 없음. 다시 입력하세요
-Api.Blocked	Blocked by Cloudflare (the browser fallback failed too)	Cloudflare가 요청을 막음 (브라우저 방식으로도 통과하지 못함)
-Api.AuthFailed	Authentication failed (HTTP {0}{1}): check the sessionKey or Organization ID	인증 실패 (HTTP {0}{1}): sessionKey 또는 Organization ID를 확인하세요
-Api.ConnectFailed	Connection failed (network or WebView2 error)	연결 실패 (네트워크 또는 WebView2 오류)
+Api.Blocked	Blocked by Cloudflare. Sign in again to pass the check	Cloudflare가 요청을 막음. 다시 로그인하면 통과합니다
+Api.AuthFailed	Authentication failed (HTTP {0}{1}): sign in to claude.ai again	인증 실패 (HTTP {0}{1}): claude.ai에 다시 로그인하세요
+Api.ConnectFailed	Connection failed (network or WebKit error)	연결 실패 (네트워크 또는 WebKit 오류)
 Api.RequestFailed	Request failed (HTTP {0}{1})	요청 실패 (HTTP {0}{1})
 Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못함
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
+Api.LoginRequired	Sign in to claude.ai to use this	claude.ai에 로그인해야 합니다
+Api.NoOrganization	No organization found for this account	이 계정에서 조직을 찾지 못함
 Settings.Title	Settings	설정
 Settings.Language	Language	언어
 Settings.LanguageAuto	System ({0})	시스템 ({0})
@@ -82,6 +84,17 @@ Settings.AutoResumeHint	Resumes a Claude or Codex conversation stopped by a usag
 Settings.ClaudeLink	Link real Claude limits (via status line, recommended)	Claude 실제 한도 연동 (상태줄 사용, 권장)
 Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
 Settings.ClaudeApi	Claude usage API (claude.ai, unofficial)	Claude 사용량 API (claude.ai, 비공식)
+Settings.ClaudeApiEnable	Use the claude.ai usage API (advanced, unofficial)	claude.ai 사용량 API 사용 (고급, 비공식)
+Settings.ClaudeApiLoginHint	For sessions where the status line does not run (Claude desktop app, VS Code extension). Sign in once in a separate claude.ai web view; the session stays only in Agent HUD's own web storage and is used only to fetch usage every 5 minutes. Agent HUD uses whichever of the status line and this API has the fresher valid value.	상태줄이 실행되지 않는 세션(Claude 데스크톱 앱, VS Code 확장)을 위한 기능입니다. 별도의 claude.ai 웹 화면에서 한 번 로그인하면, 그 세션은 Agent HUD 전용 웹 저장소에만 남고 5분마다 사용량 조회에만 쓰입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
+Settings.ClaudeApiLogin	Sign in	로그인
+Settings.ClaudeApiRelogin	Sign in again	다시 로그인
+Settings.ClaudeApiLogout	Sign out	로그아웃
+Settings.ClaudeApiRefresh	Refresh	새로고침
+Login.ClaudeTitle	Sign in to claude.ai	claude.ai 로그인
+Login.ClaudeHint	After signing in, click Done.	로그인한 뒤 완료를 누르세요.
+Login.ClaudeNotDetected	claude.ai login was not detected.	claude.ai 로그인을 확인하지 못했습니다.
+Login.Cancel	Cancel	취소
+Login.Done	Done	완료
 Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키
 Settings.Save	Save	저장

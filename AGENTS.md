@@ -102,4 +102,4 @@ macOS: `./scripts/build_app.sh` (output `src/AgentHud.macOS/dist/AgentHud.app`).
 
 `%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile), `update/` (downloaded release zip, staged files, `apply-update.ps1`, `update.log`).
 
-macOS: `~/Library/Application Support/AgentHud/` holds the equivalent `claude-statusline.sh` + `claude-limits.json` + `claude-statusline-inner.txt` (see `ClaudeLimitLink.swift`). No sessionKey API is ported to macOS.
+macOS: `~/Library/Application Support/AgentHud/` holds the equivalent `claude-statusline.sh` + `claude-limits.json` + `claude-statusline-inner.txt` (see `ClaudeLimitLink.swift`). The opt-in claude.ai usage API (`ClaudeUsageApi.swift`) signs in through an in-app WKWebView and keeps that session only in a dedicated WebKit data store (no pasted sessionKey / org ID).
