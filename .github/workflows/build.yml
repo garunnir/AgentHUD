@@ -23,6 +23,12 @@ jobs:
         shell: pwsh
         run: ./scripts/update-vda.ps1 -Verify
 
+      # src/AgentHud.Core/Strings.tsv is the single source; SwiftPM can't reference files
+      # outside the package, so the macOS table is a byte-identical copy.
+      - name: Verify shared strings table
+        shell: bash
+        run: git diff --no-index --exit-code src/AgentHud.Core/Strings.tsv src/AgentHud.macOS/AgentHud/Resources/Strings.tsv
+
       - name: Restore
         run: dotnet restore AgentHud.sln
 

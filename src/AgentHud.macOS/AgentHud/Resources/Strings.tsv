@@ -5,6 +5,10 @@ Language.Name	English	한국어
 Common.Close	Close	닫기
 Main.ShowHidden	Show hidden sessions ({0})	숨긴 세션 다시 표시 ({0})
 Main.Settings	Settings...	설정...
+Main.CheckUpdate	Check for updates	업데이트 확인
+Main.CheckUpdateDev	Check for updates (release builds only)	업데이트 확인 (릴리스 빌드 전용)
+Main.InstallUpdate	Install {0}…	{0} 설치…
+Main.UpdateDotTip	{0} is available. Right-click to install.	{0} 업데이트가 있습니다. 우클릭해서 설치하세요.
 Main.Minimize	Minimize	최소화
 Main.Memo	Notepad	메모장
 Main.ProjectMemo	Project memo...	프로젝트 메모...
@@ -21,13 +25,11 @@ Notify.ClickToOpen	Click to open the conversation.	클릭하면 대화를 엽니
 Error.ClaudeLinkFailed	Failed to link Claude limits	Claude 한도 연동 실패
 Error.KeySaveFailed	Failed to save key	키 저장 실패
 Usage.Week	Week	주간
-Usage.Month	Month	월간
-Usage.Loading	Loading OpenCode Go usage…	OpenCode Go 사용량을 불러오는 중…
 Usage.NoLimitInfo	No limit info	한도 정보 없음
 Usage.Tokens	{0} tokens	{0} 토큰
 Usage.ResetDays	{0:0.#}d	{0:0.#}일
 Usage.ResetHoursMinutes	{0}h {1}m	{0}시간 {1}분
-Usage.PaceTip	Even-pace target · {0:0}% remaining (bar ending left of the line = spending faster than the plan)	균등 소비 기준 권장 잔량 {0:0}% · 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 소모 중
+Usage.PaceTip	Recommended remaining {0:0}% (even pace)	권장 잔량 {0:0}% (균등 소비 기준)
 Usage.Stale	Stale	오래됨
 Usage.StaleValue	{0:0}% · Stale	{0:0}% · 오래됨
 Usage.StaleTip	The last known limit is too old to trust: the Claude Code status line has not reported since then (it does not run inside the VS Code extension). Run Claude Code in a terminal once to refresh it. Last updated {0:MM-dd HH:mm}.	마지막으로 알려진 한도가 너무 오래돼 신뢰할 수 없습니다. 그 뒤로 Claude Code 상태줄이 갱신하지 않았습니다(VS Code 확장 안에서는 상태줄이 실행되지 않습니다). 터미널에서 Claude Code를 한 번 실행하면 갱신됩니다. 마지막 갱신 {0:MM-dd HH:mm}.
@@ -55,12 +57,19 @@ Api.RequestFailed	Request failed (HTTP {0}{1})	요청 실패 (HTTP {0}{1})
 Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못함
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
+Api.Disabled	Off (advanced option)	꺼짐 (고급 옵션)
 Settings.Title	Settings	설정
+Settings.Tab.General	General	일반
+Settings.Tab.Alerts	Alerts	알림
+Settings.Tab.Claude	Claude	Claude
+Settings.Tab.OpenCode	OpenCode	OpenCode
 Settings.Language	Language	언어
 Settings.LanguageAuto	System ({0})	시스템 ({0})
 Settings.LanguageMissing	not translated, English	번역 없음, 영어
 Settings.WaitingSymbols	Show waiting states as symbols (? / !)	대기 상태를 기호로 표시 (? / !)
 Settings.ConversationTarget	Open conversations with	대화 열기 앱
+Settings.PaceLine	Show the even-pace marker	균등 소비 마커 표시
+Settings.PaceLineHint	The white line marks where the remaining usage should be at this point in the window if you spend it evenly. If the bar ends left of it, you are spending faster than the plan allows.	흰 선은 이 구간을 균등하게 소모했다면 지금쯤 남아 있어야 할 위치예요. 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 쓰고 있다는 뜻입니다.
 Settings.CodexActive	Codex active window	Codex 활성 유지 시간
 Settings.ActiveWindow	Session active window	세션 활성 유지 시간
 Settings.Minutes	min	분
@@ -68,8 +77,6 @@ Settings.CodexActiveHint	Codex processes can't be detected, so a session counts 
 Settings.WarningLine	Warning line (remaining %)	잔여 경고선 (%)
 Settings.WarningOff	Off	끔
 Settings.WarningHint	The bar turns amber once the remaining usage drops to this level. 0 hides the line.	잔여 사용량이 이 수치 이하로 내려가면 막대가 주황색으로 변합니다. 0이면 선을 숨깁니다.
-Settings.PaceLine	Show the even-pace marker	균등 소비 마커 표시
-Settings.PaceLineHint	The white line marks where the remaining usage should be at this point in the window if you spend it evenly. If the bar ends left of it, you are spending faster than the plan allows.	흰 선은 이 구간을 균등하게 소모했다면 지금쯤 남아 있어야 할 위치예요. 막대 끝이 선보다 왼쪽이면 계획보다 빠르게 쓰고 있다는 뜻입니다.
 Settings.CompleteSound	Play a sound on completion	완료 시 사운드 재생
 Settings.AskSound	Play a sound on questions (waiting for input or approval)	질문(입력·승인 대기) 시 사운드 재생
 Settings.Preview	Preview	미리 듣기
@@ -81,13 +88,44 @@ Settings.ResumePromptTip	Message to send when resuming	재개할 때 보낼 메�
 Settings.AutoResumeHint	Resumes a Claude or Codex conversation stopped by a usage limit once via the CLI, 1 minute after the reset. Only file edits are auto-approved (Claude acceptEdits, Codex workspace-write), and you have to reopen the VS Code conversation tab to see the progress. Limits that reset more than 30 minutes ago are left alone.	한도로 멈춘 Claude·Codex 대화를 리셋 1분 뒤 CLI로 한 번 이어 실행합니다. 파일 편집만 자동 허용되고(Claude acceptEdits, Codex workspace-write), 진행 내용은 VS Code 대화 탭을 다시 열어야 보입니다. 리셋 후 30분이 지난 한도는 건드리지 않습니다.
 Settings.ClaudeLink	Link real Claude limits (via status line, recommended)	Claude 실제 한도 연동 (상태줄 사용, 권장)
 Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
-Settings.ClaudeApi	Claude usage API (claude.ai, unofficial)	Claude 사용량 API (claude.ai, 비공식)
+Settings.ClaudeApi	Claude usage API (advanced — for VS Code extension users)	Claude 사용량 API (고급 — VS Code 확장 사용자용)
+Settings.ClaudeApiEnable	Use the claude.ai usage API (advanced, unofficial)	claude.ai 사용량 API 사용 (고급, 비공식)
+Settings.ClaudeApiWarn	Uses your claude.ai web session cookie. Unofficial and sensitive — turn this on only if you need it.	claude.ai 웹 세션 쿠키를 사용합니다. 비공식이며 민감한 정보이므로 필요할 때만 켜세요.
 Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키
 Settings.Save	Save	저장
 Settings.DeleteKey	Delete key	키 삭제
-Settings.ClaudeApiHint	In claude.ai DevTools, copy the UUID from /api/organizations/{UUID}/... in the Network tab and sessionKey from Application → Cookies. The key is encrypted so only the current user on this PC can decrypt it, and it is used only to fetch usage every 5 minutes. Enter it again when it expires.	claude.ai 개발자도구 → 네트워크의 /api/organizations/{UUID}/... 에서 UUID를, Application → Cookies에서 sessionKey를 복사하세요. 키는 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장하며 5분마다 사용량만 조회합니다. 만료되면 다시 넣어야 합니다.
+Settings.ClaudeApiHint	In claude.ai DevTools, copy the UUID from /api/organizations/{UUID}/... in the Network tab and sessionKey from Application → Cookies. The key is encrypted so only the current user on this PC can decrypt it, and it is used only to fetch usage every 5 minutes. Enter it again when it expires. Intended for VS Code extension users, since the status line above does not run there. Agent HUD uses whichever of the status line and this API has the fresher valid value.	claude.ai 개발자도구 → 네트워크의 /api/organizations/{UUID}/... 에서 UUID를, Application → Cookies에서 sessionKey를 복사하세요. 키는 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장하며 5분마다 사용량만 조회합니다. 만료되면 다시 넣어야 합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
 Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows only the total, no bar)	연동하지 않을 때 Claude 사용량 예산 (백만 토큰, 0이면 막대 없이 합계만)
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간
 Settings.BudgetHint	Claude's real limits aren't known locally, so the sum of input + output + cache-creation tokens is compared against this budget. Codex uses the real limits reported by the server.	Claude의 실제 한도는 로컬에서 알 수 없어, 입력+출력+캐시 생성 토큰 합계를 이 예산과 비교해 표시합니다. Codex는 서버가 알려 준 실제 한도를 씁니다.
+Settings.AutoUpdate	Check for updates automatically	업데이트 자동 확인
+Settings.CheckUpdate	Check now	지금 확인
+Settings.AutoUpdateHint	Checks GitHub releases at startup and every 6 hours. Nothing pops up: a new version only shows a small dot in the header and an "Install" item in the right-click menu. Installing always asks first, then the HUD replaces its files and restarts. Pre-releases are skipped.	시작할 때와 6시간마다 GitHub 릴리스를 확인합니다. 팝업은 띄우지 않고, 새 버전이 있으면 헤더에 작은 점과 우클릭 메뉴의 "설치" 항목만 표시합니다. 설치 전에는 항상 확인을 묻고, 동의하면 HUD가 파일을 교체한 뒤 다시 시작합니다. 프리릴리스는 건너뜁니다.
+Update.Current	Current version {0}	현재 버전 {0}
+Update.Checking	Checking for updates…	업데이트 확인 중…
+Update.Confirm	Install Agent HUD {0}? (current {1})\n\nThe HUD will close, update its files and restart.	Agent HUD {0}을(를) 설치할까요? (현재 {1})\n\nHUD가 종료되어 파일을 교체한 뒤 다시 시작합니다.
+Update.UpToDate	Up to date ({0})	최신 버전입니다 ({0})
+Update.Available	{0} available — install it from the right-click menu	{0} 사용 가능 — 우클릭 메뉴에서 설치할 수 있습니다
+Update.Downloading	Downloading {0}…	{0} 내려받는 중…
+Update.Failed	Update failed: {0}	업데이트 실패: {0}
+Update.NotWritable	Can't write to the install folder, so the release page was opened instead.	설치 폴더에 쓸 수 없어 릴리스 페이지를 열었습니다.
+Update.DevBuild	Automatic updates are only available in release builds.	자동 업데이트는 릴리스 빌드에서만 동작합니다.
+Usage.Month	Month	월간
+Usage.Loading	Loading OpenCode Go usage…	OpenCode Go 사용량을 불러오는 중…
+Go.Title	OpenCode Go usage (Console, unofficial)	OpenCode Go 사용량 (Console, 비공식)
+Go.Workspace	Workspace ID	Workspace ID
+Go.Login	Login	로그인
+Go.Refresh	Refresh	새로고침
+Go.Logout	Logout	로그아웃
+Go.LoginTitle	Sign in to OpenCode Console	OpenCode Console 로그인
+Go.LoginHint	After signing in, click Save to store this session securely.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다.
+Go.Hint	Copy the workspace ID from your Console URL (wrk_...). Log in, then click Save. Session cookies are encrypted for this Windows user; usage refreshes every 5 minutes. Go subscriptions only, not other providers.	Console URL의 workspace ID(wrk_...)를 입력하고 로그인 후 저장을 누르세요. 쿠키는 Windows 현재 사용자용으로 암호화하며 5분마다 조회합니다. Go 구독만 지원합니다.
+Go.NotConfigured	Console login not configured	Console 로그인 미설정
+Go.WorkspaceRequired	Enter a workspace ID	Workspace ID를 입력하세요
+Go.WorkspaceInvalid	Enter the workspace ID, not the full URL	전체 URL 대신 workspace ID를 입력하세요
+Go.LoginRequired	Log in again and check the workspace ID	다시 로그인하고 workspace ID를 확인하세요
+Go.HttpError	Go usage request failed (HTTP {0})	Go 사용량 조회 실패 (HTTP {0})
+Go.BadResponse	Go usage unavailable: no subscription or unsupported response	Go 사용량 없음: 구독 또는 응답 형식을 확인하세요
+Go.LogoutFailed	Could not remove the saved Console session	저장된 Console 세션을 삭제하지 못했습니다
