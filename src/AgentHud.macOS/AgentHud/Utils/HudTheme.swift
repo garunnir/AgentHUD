@@ -66,6 +66,8 @@ enum HudTheme {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "MM-dd HH:mm"
                 result = result.replacingOccurrences(of: "{\(index):MM-dd HH:mm}", with: formatter.string(from: date))
+                formatter.dateFormat = "HH:mm"
+                result = result.replacingOccurrences(of: "{\(index):HH:mm}", with: formatter.string(from: date))
             }
             result = result.replacingOccurrences(of: "{\(index)}", with: stringValue(arg))
         }

@@ -44,6 +44,13 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var isScanning = true
     /// Live Codex usage from the server (nil until the first successful fetch).
     @Published private(set) var liveUsage: CodexUsage?
+    /// Opt-in claude.ai usage API (see ClaudeUsageApi); fills ClaudeLimitPolicy's `api` slot.
+    @Published public var claudeApiEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(claudeApiEnabled, forKey: Self.claudeApiKey)
+            ClaudeUsageApi.shared.enabled = claudeApiEnabled
+        }
+    }
     /// Live OpenCode Go usage from the Console (nil until Console login succeeds).
     @Published private(set) var openCodeGoUsage: OpenCodeGoUsage?
     /// True while the Console usage request is in flight, so the HUD does not look
@@ -71,6 +78,8 @@ public final class AgentHudViewModel: ObservableObject {
     private static let conversationTargetKey = "hud.conversationTarget"
     private static let activeWindowKey = "hud.activeWindowMinutes"
     private static let claudeLinkKey = "hud.claudeLimitLink"
+    private static let claudeApiKey = "hud.claudeApiEnabled"
+    private var claudeApiObserver: AnyCancellable?
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -126,6 +135,12 @@ public final class AgentHudViewModel: ObservableObject {
         // here instead of relying on the `claudeLimitLinked` property observer. A failed
         // install leaves the key unset so it retries next launch instead of being stuck
         // "declined".
+        self.claudeApiEnabled = UserDefaults.standard.bool(forKey: Self.claudeApiKey)
+        ClaudeUsageApi.shared.enabled = claudeApiEnabled
+        // Re-render the gauges when a fetch lands (the API object publishes on its own).
+        claudeApiObserver = ClaudeUsageApi.shared.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         if UserDefaults.standard.object(forKey: Self.claudeLinkKey) == nil {
             if ClaudeLimitLink.shared.linkQuietly() || ClaudeLimitLink.shared.isLinked {
                 self.claudeLimitLinked = true
@@ -346,6 +361,7 @@ public final class AgentHudViewModel: ObservableObject {
     /// Codex limits come from the latest session's rate_limits; Claude shows token totals.
     func buildUsageRows(now: Date = Date()) -> [UsageRow] {
         refreshLiveUsageIfNeeded(now: now)
+        ClaudeUsageApi.shared.refreshIfNeeded(now: now)
         if OpenCodeGoUsageApi.shared.hasCookies,
            openCodeGoUsage == nil || now.timeIntervalSince(openCodeGoUsage!.fetchedAt) >= OpenCodeGoUsageApi.refreshInterval {
             refreshOpenCodeGoUsage()
@@ -355,10 +371,11 @@ public final class AgentHudViewModel: ObservableObject {
 
         let claude = sessions.filter { $0.agentType == .claudeCode }
         if !claude.isEmpty {
-            // statusLine (default, official CLI value) vs. the sessionKey API (not ported to
-            // macOS, so always .none) -- see ClaudeLimitPolicy for the selection/staleness rules.
+            // statusLine (default, official CLI value) vs. the opt-in claude.ai usage API
+            // (.none while off) -- see ClaudeLimitPolicy for the selection/staleness rules.
             let lastActivity = claude.map(\.lastActivityAt).max()
-            let pick = ClaudeLimitPolicy.pick(statusLine: ClaudeLimitLink.shared.readSnapshot(), api: .none,
+            let pick = ClaudeLimitPolicy.pick(statusLine: ClaudeLimitLink.shared.readSnapshot(),
+                                              api: claudeApiEnabled ? ClaudeUsageApi.shared.snapshot : .none,
                                               now: now, lastClaudeActivity: lastActivity)
             let tokens5h = claude.reduce(Int64(0)) { $0 + $1.tokens5h }
             let tokensWeek = claude.reduce(Int64(0)) { $0 + $1.tokensWeek }

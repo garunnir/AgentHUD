@@ -61,7 +61,7 @@ rollout의 `token_count.rate_limits`에서 primary/secondary window를 읽습니
 - **claude.ai usage API (선택, opt-in)**: WebView2를 통해 5분마다 조회합니다. sessionKey는 Windows DPAPI로 암호화하여 `%LOCALAPPDATA%\AgentHud`에 저장합니다. 비공식 endpoint이므로 변경될 수 있고, `ClaudeApiEnabled`가 꺼져 있으면 저장된 키가 있어도 조회하지 않습니다(WebView2도 생성하지 않음). 주로 status line이 실행되지 않는 VS Code 확장 사용자를 위한 보조 경로입니다.
 - **선택 정책**: `ClaudeLimitPolicy.Pick`(`src/AgentHud.Core/ClaudeLimits.cs`)이 두 소스 중 "더 신선하고 유효한" 쪽을 고릅니다. status line은 12시간, API는 30분이 지나면 오래된 것으로 봅니다. status line은 추가로, 기록 이후 Claude 세션이 더 움직였다면(활동 시각이 `UpdatedAt + 15분`보다 뒤) 오래된 것으로 봅니다 — status line이 실행되지 않는 곳(VS Code 확장)에서 작업했다는 뜻이기 때문입니다. 두 소스의 창은 섞지 않고(계정이 다를 수 있음), 창별로 `resets_at`이 이미 지났으면 그 창만 따로 무효화합니다. 동률이면 공식 CLI 값인 status line이 이깁니다.
 - 선택된 값이 오래됐으면 마지막으로 알려진 숫자에 `Usage.StaleValue`("42% · Stale")로 표시를 붙이고, 그 창의 `resets_at`마저 지나 숫자가 무의미해졌으면 `Usage.Stale`("Stale")만 보여줍니다. 두 소스 모두 값이 없으면 HUD가 발견한 로그의 input, output, cache creation token 합계를 표시합니다.
-- macOS는 같은 `claude-limits.json` 규약을 `~/Library/Application Support/AgentHud`의 `claude-statusline.sh`로 구현합니다(`ClaudeLimitLink.swift`). sessionKey API는 macOS에 포팅하지 않았습니다.
+- macOS는 같은 `claude-limits.json` 규약을 `~/Library/Application Support/AgentHud`의 `claude-statusline.sh`로 구현합니다(`ClaudeLimitLink.swift`). claude.ai usage API는 opt-in으로 `ClaudeUsageApi.swift`에 포팅했습니다. sessionKey·Organization ID를 붙여 넣는 대신 앱 안의 WKWebView에서 한 번 로그인하고, 세션은 전용 WebKit 데이터 저장소에만 남습니다. 조회는 Cloudflare 때문에 화면 밖 WKWebView로 하며, org는 `/api/organizations`에서 Pro/Max 플랜이 있는 것을 자동으로 고릅니다.
 
 ## 자동 재개
 

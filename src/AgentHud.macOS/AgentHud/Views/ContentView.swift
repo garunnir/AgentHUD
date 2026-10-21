@@ -257,6 +257,8 @@ struct HeaderButton: View {
 struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
     @State private var showOpenCodeLogin = false
+    @State private var showClaudeLogin = false
+    @ObservedObject private var claudeApi = ClaudeUsageApi.shared
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
     /// Doubles, not Ints: the picker's tags must match the Double binding, otherwise
@@ -314,6 +316,31 @@ struct SettingsPopover: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: $viewModel.claudeApiEnabled) {
+                    Text(Localiz.current.string("Settings.ClaudeApiEnable")).font(.system(size: 12))
+                }
+                .toggleStyle(.checkbox)
+                Text(Localiz.current.string("Settings.ClaudeApiLoginHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if viewModel.claudeApiEnabled {
+                    HStack(spacing: 6) {
+                        Button(Localiz.current.string(claudeApi.hasSession ? "Settings.ClaudeApiRelogin" : "Settings.ClaudeApiLogin")) {
+                            showClaudeLogin = true
+                        }
+                        if claudeApi.hasSession {
+                            Button(Localiz.current.string("Settings.ClaudeApiRefresh")) { claudeApi.refresh() }
+                            Button(Localiz.current.string("Settings.ClaudeApiLogout")) { claudeApi.logout() }
+                        }
+                    }
+                    Text(claudeApi.statusText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 Text("OpenCode Go")
@@ -364,6 +391,9 @@ struct SettingsPopover: View {
         .frame(width: 260)
         .sheet(isPresented: $showOpenCodeLogin) {
             OpenCodeLoginView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showClaudeLogin) {
+            ClaudeLoginView()
         }
     }
 }
@@ -436,6 +466,54 @@ struct OpenCodeWebView: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {
         session.webView = nsView
     }
+}
+
+/// claude.ai sign-in for ClaudeUsageApi. Uses the API's own data store and user agent so
+/// the session (and any Cloudflare clearance) is the one the hidden fetcher reuses.
+struct ClaudeLoginView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(Localiz.current.string("Login.ClaudeTitle"))
+                    .font(.headline)
+                Spacer()
+                Button(Localiz.current.string("Login.Cancel")) { dismiss() }
+            }
+            .padding(12)
+            ClaudeWebView()
+            HStack {
+                Text(error ?? Localiz.current.string("Login.ClaudeHint"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(error == nil ? Color.secondary : Color.red)
+                    .lineLimit(2)
+                Spacer()
+                Button(Localiz.current.string("Login.Done")) {
+                    ClaudeUsageApi.shared.loginFinished { found in
+                        if found { dismiss() } else { error = Localiz.current.string("Login.ClaudeNotDetected") }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(12)
+        }
+        .frame(width: 760, height: 620)
+    }
+}
+
+struct ClaudeWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = ClaudeUsageApi.shared.dataStore
+        configuration.applicationNameForUserAgent = ClaudeUsageApi.applicationNameForUserAgent
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.load(URLRequest(url: ClaudeUsageApi.loginURL))
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 
 struct SessionRow: View {

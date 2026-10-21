@@ -1,8 +1,8 @@
 import Foundation
 
 /// Swift port of `src/AgentHud.Core/ClaudeLimits.cs` (the reference implementation —
-/// keep both in sync). There is no sessionKey API port on macOS, so `api` is always
-/// `.none` here; the parameter stays so both ports share the same `pick` signature.
+/// keep both in sync). The `api` snapshot comes from `ClaudeUsageApi` (opt-in claude.ai
+/// login), `.none` while that is off.
 public enum ClaudeLimitSource: Sendable {
     case none, statusLine, usageApi
 }
@@ -27,6 +27,30 @@ public struct ClaudeLimitSnapshot: Sendable {
         let seven = window(limits["seven_day"] as? [String: Any])
         if five == nil && seven == nil { return .none }
         return ClaudeLimitSnapshot(source: .statusLine, fiveHour: five, sevenDay: seven, updatedAt: updatedAt)
+    }
+
+    /// claude.ai `/api/organizations/{org}/usage` body:
+    /// {"five_hour":{"utilization":..,"resets_at":"<ISO 8601>"|null},"seven_day":{..},..}
+    /// A null `resets_at` means no window is running, so the reset time is unknown.
+    public static func parseUsageApi(_ data: Data, updatedAt: Date) -> ClaudeLimitSnapshot {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .none }
+        func window(_ name: String) -> LimitWindow? {
+            guard let w = root[name] as? [String: Any], let used = (w["utilization"] as? NSNumber)?.doubleValue else { return nil }
+            return LimitWindow(usedPercent: used, resetsAt: (w["resets_at"] as? String).flatMap(parseISODate))
+        }
+        let five = window("five_hour")
+        let seven = window("seven_day")
+        if five == nil && seven == nil { return .none }
+        return ClaudeLimitSnapshot(source: .usageApi, fiveHour: five, sevenDay: seven, updatedAt: updatedAt)
+    }
+
+    /// Accepts any number of fractional digits ("…T12:00:00.123456+00:00"), which
+    /// ISO8601DateFormatter alone rejects beyond milliseconds.
+    static func parseISODate(_ text: String) -> Date? {
+        let trimmed = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: trimmed)
     }
 
     private static func window(_ w: [String: Any]?) -> LimitWindow? {
