@@ -19,7 +19,7 @@ src/AgentHud.Core/          net9.0 class library — no UI, all parsing/state lo
   UpdateChecker.cs          picks a newer GitHub release + matching zip asset (auto-update)
   RateLimitNotifier.cs      decides which sessions get a "limit reset" notification
   MemoStore.cs              global + per-project notes (memos.json)
-  Loc.cs, Strings.tsv       localization table (THIS Strings.tsv is the one loaded at runtime)
+  Loc.cs, Strings.tsv       localization table — single source for Windows AND macOS (see Conventions)
 src/AgentHud/               net9.0-windows WPF app (WinExe)
   MainWindow.xaml(.cs)      the HUD: session list, minimized dot bar, usage gauges, settings
                             persistence (Placement record), VS Code open (OpenInVsCode)
@@ -30,7 +30,6 @@ src/AgentHud/               net9.0-windows WPF app (WinExe)
   ClaudeLimitLink.cs        installs a statusLine script in ~/.claude/settings.json to read rate_limits
   Windows/                  VirtualDesktopPin (PinWindow P/Invoke), VirtualDesktopFollower (fallback)
   native/                   VirtualDesktopAccessor.dll + vda.json (bot-managed, do not hand-edit)
-  Strings.tsv               copy of the Core table; keep identical to src/AgentHud.Core/Strings.tsv
 src/AgentHud.macOS/         Swift Package (macOS 14+), separate port, also has OpenCode providers
 tests/AgentHud.Tests/       console program of Assert(...) checks — Program.cs
 scripts/                    update-vda.ps1 (DLL verify/update), build_app.sh (macOS bundle),
@@ -69,7 +68,7 @@ docs/                       vscode-session-open.md (VS Code URI investigation), 
 | Double-click → VS Code | `MainWindow.OpenInVsCode`, `ConversationUri`; background in docs/vscode-session-open.md |
 | Status colors | `StateBrushConverter` |
 | A new setting | property on `MainWindow` + field on the `Placement` record (`SavePlacement`/`RestorePlacement`) + `SettingsWindow.xaml` + strings |
-| UI text / translations | `src/AgentHud.Core/Strings.tsv` (copy to `src/AgentHud/Strings.tsv`); XAML uses `{local:Tr Key}`, code uses `Loc.T` / `Loc.F` |
+| UI text / translations | `src/AgentHud.Core/Strings.tsv` (copy byte-for-byte to `src/AgentHud.macOS/AgentHud/Resources/Strings.tsv`); XAML uses `{local:Tr Key}`, C# uses `Loc.T` / `Loc.F`, Swift uses `Localiz.current.string` |
 | Supporting a new agent | implement `IAgentProvider`, add a value to `AgentType`, register it in the `MainWindow` constructor |
 | Auto-update (release check, install) | `UpdateChecker.Pick` (Core), `AppUpdater`, `MainWindow.CheckForUpdateAsync`/`InstallUpdateAsync`; asset flavor comes from `-p:UpdateAsset=` in release.yml (dev builds have none → disabled) |
 | Virtual desktop pinning | `Windows/VirtualDesktopPin.cs`, `Windows/VirtualDesktopFollower.cs` |
@@ -95,6 +94,7 @@ macOS: `./scripts/build_app.sh` (output `src/AgentHud.macOS/dist/AgentHud.app`).
 - Code comments are mostly Korean; docs/README are English. Commit messages and PR titles: short English imperative (`Fix Codex session state after turn abort`).
 - Keep agent-format parsing inside the provider. When relying on an external tool's internal format or URI, note the verified version in a comment or doc.
 - Tests: add an `Assert(...)` to `tests/AgentHud.Tests/Program.cs` for behavior changes. Never read the real `~/.claude` / `~/.codex`; create fake session files under a temp dir like existing checks. Use `TimeProvider` injection for time-dependent logic.
+- Strings are one table for both ports: edit `src/AgentHud.Core/Strings.tsv`, then `cp src/AgentHud.Core/Strings.tsv src/AgentHud.macOS/AgentHud/Resources/Strings.tsv` (SwiftPM can't reference files outside the package). CI fails if the two differ. Keys unused by one port are fine.
 - Do not edit `src/AgentHud/native/*` by hand; the Update VirtualDesktopAccessor workflow opens PRs for it.
 - macOS code is maintained by @hail-kang; Windows-only maintainers cannot test it.
 

@@ -8,7 +8,6 @@
     <RootNamespace>AgentHud</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Strings.tsv" LogicalName="AgentHud.Strings.tsv" />
     <None Include="native\VirtualDesktopAccessor.dll" CopyToOutputDirectory="PreserveNewest" Link="VirtualDesktopAccessor.dll" />
   </ItemGroup>
   <!-- 릴리스 워크플로가 -p:UpdateAsset=win-x64.zip 처럼 넘기면 자동 업데이트가 같은 배포 형태의 zip을 고름. 개발 빌드는 비어 있어 업데이트 비활성 -->
