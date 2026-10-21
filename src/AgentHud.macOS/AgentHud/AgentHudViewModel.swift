@@ -5,8 +5,12 @@ import Combine
 public final class AgentHudViewModel: ObservableObject {
     @Published public var sessions: [AgentSession] = []
     @Published public var isMinimized = false
-    @Published public var hiddenSessionIds: Set<String> = []
-    @Published public var memos: [String: String] = [:]
+    /// Hidden session ID → display state when last seen. A hidden session comes back once it
+    /// newly needs attention (waiting or completed), like on Windows.
+    @Published public private(set) var hiddenSessions: [String: AgentState] = [:]
+    public var hiddenSessionIds: Set<String> { Set(hiddenSessions.keys) }
+    /// Bumped on every memo save so rows re-read their memo icon.
+    @Published public private(set) var memoVersion = 0
     // Shared active window (minutes). Sessions whose last event is within this window are considered active.
     @Published public var activeWindowMinutes: Int = 60 {
         didSet {
@@ -19,6 +23,56 @@ public final class AgentHudViewModel: ObservableObject {
     }
     // Show waiting states as ? / ! symbols instead of yellow dots (off by default, like Windows).
     @Published public var showWaitingSymbols = false
+    /// Display language code; `Localiz.auto` follows the system language.
+    @Published public var uiLanguage: String = Localiz.auto {
+        didSet {
+            Localiz.current.language = uiLanguage
+            UserDefaults.standard.set(uiLanguage, forKey: Self.languageKey)
+        }
+    }
+    /// Resume a conversation once via the CLI after its usage limit resets (see AutoResumer).
+    @Published public var autoResume = false {
+        didSet { UserDefaults.standard.set(autoResume, forKey: Self.autoResumeKey) }
+    }
+    /// Custom resume message; empty means the current language's default.
+    @Published public var resumePrompt = "" {
+        didSet { UserDefaults.standard.set(resumePrompt, forKey: Self.resumePromptKey) }
+    }
+    @Published public var notifyLimitReset = true {
+        didSet {
+            UserDefaults.standard.set(notifyLimitReset, forKey: Self.notifyLimitResetKey)
+            if notifyLimitReset { notifications.requestAuthorization() }
+        }
+    }
+    /// Skip hidden sessions when announcing a limit reset.
+    @Published public var notifyVisibleOnly = true {
+        didSet { UserDefaults.standard.set(notifyVisibleOnly, forKey: Self.notifyVisibleOnlyKey) }
+    }
+    @Published public var completeSoundEnabled = true {
+        didSet { UserDefaults.standard.set(completeSoundEnabled, forKey: Self.completeSoundEnabledKey) }
+    }
+    @Published public var completeSound = "Glass" {
+        didSet { UserDefaults.standard.set(completeSound, forKey: Self.completeSoundKey) }
+    }
+    @Published public var completeSoundFile = "" {
+        didSet { UserDefaults.standard.set(completeSoundFile, forKey: Self.completeSoundFileKey) }
+    }
+    @Published public var askSoundEnabled = true {
+        didSet { UserDefaults.standard.set(askSoundEnabled, forKey: Self.askSoundEnabledKey) }
+    }
+    @Published public var askSound = "Ping" {
+        didSet { UserDefaults.standard.set(askSound, forKey: Self.askSoundKey) }
+    }
+    @Published public var askSoundFile = "" {
+        didSet { UserDefaults.standard.set(askSoundFile, forKey: Self.askSoundFileKey) }
+    }
+    /// Claude token budgets (million tokens) used when no real limit is known; 0 = total only.
+    @Published public var claudeBudget5h: Double = 0 {
+        didSet { UserDefaults.standard.set(claudeBudget5h, forKey: Self.claudeBudget5hKey) }
+    }
+    @Published public var claudeBudgetWeek: Double = 0 {
+        didSet { UserDefaults.standard.set(claudeBudgetWeek, forKey: Self.claudeBudgetWeekKey) }
+    }
     /// Remaining-% the amber warning line marks in the usage bars (0 hides it).
     @Published public var warningPercent: Double = 30 {
         didSet { UserDefaults.standard.set(warningPercent, forKey: Self.warningPercentKey) }
@@ -36,7 +90,15 @@ public final class AgentHudViewModel: ObservableObject {
             UserDefaults.standard.set(claudeLimitLinked, forKey: Self.claudeLinkKey)
             guard claudeLimitLinked != ClaudeLimitLink.shared.isLinked else { return }
             do { if claudeLimitLinked { try ClaudeLimitLink.shared.link() } else { try ClaudeLimitLink.shared.unlink() } }
-            catch { print("Claude limit link: \(error)") }
+            catch {
+                // Tell the user (like Windows) and show the actual link state again.
+                let alert = NSAlert()
+                alert.messageText = Localiz.current.string("Error.ClaudeLinkFailed")
+                alert.informativeText = error.localizedDescription
+                DispatchQueue.main.async { alert.runModal() }
+                claudeLimitLinked = ClaudeLimitLink.shared.isLinked
+                UserDefaults.standard.set(claudeLimitLinked, forKey: Self.claudeLinkKey)
+            }
         }
     }
     /// True until the first discovery pass finishes, so the HUD can show a spinner
@@ -71,6 +133,30 @@ public final class AgentHudViewModel: ObservableObject {
     private static let conversationTargetKey = "hud.conversationTarget"
     private static let activeWindowKey = "hud.activeWindowMinutes"
     private static let claudeLinkKey = "hud.claudeLimitLink"
+    private static let languageKey = "hud.language"
+    private static let autoResumeKey = "hud.autoResume"
+    private static let resumePromptKey = "hud.resumePrompt"
+    private static let notifyLimitResetKey = "hud.notifyLimitReset"
+    private static let notifyVisibleOnlyKey = "hud.notifyVisibleOnly"
+    private static let completeSoundEnabledKey = "hud.completeSoundEnabled"
+    private static let completeSoundKey = "hud.completeSound"
+    private static let completeSoundFileKey = "hud.completeSoundFile"
+    private static let askSoundEnabledKey = "hud.askSoundEnabled"
+    private static let askSoundKey = "hud.askSound"
+    private static let askSoundFileKey = "hud.askSoundFile"
+    private static let claudeBudget5hKey = "hud.claudeBudget5h"
+    private static let claudeBudgetWeekKey = "hud.claudeBudgetWeek"
+    /// ~/Library/Application Support/AgentHud (memos.json, auto-resume.log).
+    static let dataDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("AgentHud")
+
+    private let resumer: AutoResumer
+    private let limitNotifier = RateLimitNotifier()
+    private let notifications: LimitResetNotifications
+    private let memoStore: MemoStore
+    /// Display state per session at the previous scan; sounds play only on a change.
+    private var lastStates: [String: AgentState] = [:]
+    private var soundsPrimed = false
 
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
@@ -80,6 +166,9 @@ public final class AgentHudViewModel: ObservableObject {
     private var updateTask: Task<Void, Never>?
 
     public init() {
+        self.resumer = AutoResumer(logDirectory: Self.dataDirectory)
+        self.notifications = LimitResetNotifications()
+        self.memoStore = MemoStore(url: Self.dataDirectory.appendingPathComponent("memos.json"))
         let registry = AgentSessionRegistry()
         self.registry = registry
         let home = NSHomeDirectory()
@@ -99,8 +188,7 @@ public final class AgentHudViewModel: ObservableObject {
         registry.onChanged = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.sessions = self.registry.getAllAgents()
-                self.isScanning = false
+                self.sessionsChanged(self.registry.getAllAgents())
             }
         }
 
@@ -138,6 +226,96 @@ public final class AgentHudViewModel: ObservableObject {
                 ClaudeLimitLink.shared.linkQuietly()
             }
         }
+        // Settings ported from Windows. `didSet` does not run inside init, so side effects
+        // (language, notification permission) are applied explicitly below.
+        let defaults = UserDefaults.standard
+        self.uiLanguage = defaults.string(forKey: Self.languageKey) ?? Localiz.auto
+        Localiz.current.language = self.uiLanguage
+        self.autoResume = defaults.bool(forKey: Self.autoResumeKey)
+        self.resumePrompt = defaults.string(forKey: Self.resumePromptKey) ?? ""
+        self.notifyLimitReset = defaults.object(forKey: Self.notifyLimitResetKey) as? Bool ?? true
+        self.notifyVisibleOnly = defaults.object(forKey: Self.notifyVisibleOnlyKey) as? Bool ?? true
+        self.completeSoundEnabled = defaults.object(forKey: Self.completeSoundEnabledKey) as? Bool ?? true
+        self.completeSound = defaults.string(forKey: Self.completeSoundKey) ?? "Glass"
+        self.completeSoundFile = defaults.string(forKey: Self.completeSoundFileKey) ?? ""
+        self.askSoundEnabled = defaults.object(forKey: Self.askSoundEnabledKey) as? Bool ?? true
+        self.askSound = defaults.string(forKey: Self.askSoundKey) ?? "Ping"
+        self.askSoundFile = defaults.string(forKey: Self.askSoundFileKey) ?? ""
+        self.claudeBudget5h = max(0, defaults.double(forKey: Self.claudeBudget5hKey))
+        self.claudeBudgetWeek = max(0, defaults.double(forKey: Self.claudeBudgetWeekKey))
+        notifications.onOpen = { [weak self] id in self?.openSession(id) }
+        if notifyLimitReset { notifications.requestAuthorization() }
+    }
+
+    // MARK: - Session updates (sounds, hidden sessions, limit reset, auto-resume)
+
+    private func sessionsChanged(_ all: [AgentSession]) {
+        if autoResume {
+            // CLI lookup may ask the login shell, so keep it off the main thread.
+            let resumer = self.resumer
+            let prompt = resumePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AutoResumer.defaultPrompt : resumePrompt
+            DispatchQueue.global(qos: .utility).async { resumer.check(all, prompt: prompt) }
+        }
+        playStateSounds(all)
+        // Keep hidden sessions hidden until reset, but show one again once it newly waits or completes.
+        var hidden = hiddenSessions
+        for (id, seen) in hiddenSessions {
+            guard let session = all.first(where: { $0.id == id }) else { hidden[id] = nil; continue }
+            let state = session.displayState
+            hidden[id] = state != seen && Self.needsAttention(state) ? nil : state
+        }
+        if hidden != hiddenSessions { hiddenSessions = hidden }
+        sessions = all
+        isScanning = false
+        if notifyLimitReset {
+            let candidates = notifyVisibleOnly ? all.filter { hidden[$0.id] == nil } : all
+            for session in limitNotifier.takeDue(candidates) { showLimitReset(session) }
+        }
+    }
+
+    private static func needsAttention(_ state: AgentState) -> Bool {
+        state == .waitingForInput || state == .waitingForApproval || state == .completed
+    }
+
+    private func playStateSounds(_ all: [AgentSession]) {
+        var complete = false, ask = false
+        let now = Date()
+        for session in all {
+            let state = session.displayState
+            let previous = lastStates[session.id]
+            lastStates[session.id] = state
+            // Skip the first scan and old sessions discovered late.
+            if !soundsPrimed || previous == state || session.parentSessionId != nil
+                || now.timeIntervalSince(session.lastActivityAt) > 60 { continue }
+            if state == .completed { complete = true }
+            else if state == .waitingForInput || state == .waitingForApproval { ask = true }
+        }
+        let seen = Set(all.map(\.id))
+        lastStates = lastStates.filter { seen.contains($0.key) }
+        soundsPrimed = true
+        if ask && askSoundEnabled { SoundPlayer.play(askSound, file: askSoundFile) }
+        else if complete && completeSoundEnabled { SoundPlayer.play(completeSound, file: completeSoundFile) }
+    }
+
+    private func showLimitReset(_ session: AgentSession) {
+        let loc = Localiz.current
+        let time = session.rateLimitResetAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? ""
+        let title = HudTheme.formatPattern(loc.string("Notify.LimitResetTitle"), [session.agentType.displayName, session.projectName])
+        let body = HudTheme.formatPattern(loc.string("Notify.LimitResetBody").replacingOccurrences(of: "{1:HH:mm}", with: "{1}"),
+                                          [session.displayTitle, time])
+            + " " + loc.string(autoResume ? "Notify.AutoResumeSoon" : "Notify.ClickToOpen")
+        notifications.show(sessionId: session.id, title: title, body: body)
+    }
+
+    private func openSession(_ id: String) {
+        guard let session = registry.findSession(id) else { return }
+        acknowledgeCompletion(id)
+        openProject(session)
+    }
+
+    public func previewSound(ask: Bool) {
+        if ask { SoundPlayer.play(askSound, file: askSoundFile) }
+        else { SoundPlayer.play(completeSound, file: completeSoundFile) }
     }
 
     public func start() {
@@ -183,11 +361,14 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     public func hideSession(_ id: String) {
-        hiddenSessionIds.insert(id)
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        // Acknowledge a completion so the hidden row does not pop right back.
+        hiddenSessions[id] = session.hasUnreadCompletion ? .idle : session.displayState
+        if session.hasUnreadCompletion { registry.acknowledgeCompletion(id) }
     }
 
     public func showHiddenSessions() {
-        hiddenSessionIds.removeAll()
+        hiddenSessions.removeAll()
     }
 
     public func acknowledgeCompletion(_ id: String) {
@@ -306,12 +487,22 @@ public final class AgentHudViewModel: ObservableObject {
         }
     }
 
-    public func setMemo(_ memo: String, for projectPath: String) {
-        memos[projectPath] = memo
+    // MARK: - Memos
+
+    public var globalMemo: String { memoStore.global }
+
+    public func setGlobalMemo(_ text: String) {
+        memoStore.setGlobal(text)
+        memoVersion += 1
     }
 
-    public func memo(for projectPath: String) -> String? {
-        memos[projectPath]
+    public func projectMemo(_ projectPath: String?) -> String { memoStore.project(projectPath) ?? "" }
+
+    public func hasProjectMemo(_ projectPath: String?) -> Bool { memoStore.hasProject(projectPath) }
+
+    public func setProjectMemo(_ projectPath: String, _ text: String) {
+        memoStore.setProject(projectPath, text)
+        memoVersion += 1
     }
 
     /// Fetches live usage from the server at most every 5 minutes (failures retry after
@@ -437,9 +628,17 @@ public final class AgentHudViewModel: ObservableObject {
                                  pickUpdatedAt: Date, tokens: Int64, now: Date) -> UsageRow {
         let loc = Localiz.current
         guard let window else {
-            return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: nil,
-                            text: HudTheme.formatPattern(loc.string("Usage.Tokens"), [HudTheme.formatTokens(tokens)]),
-                            pacePercent: nil)
+            // No real limit: compare against the user's token budget, or show only the total.
+            let budget = label == "5h" ? claudeBudget5h : claudeBudgetWeek
+            guard budget > 0 else {
+                return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: nil,
+                                text: HudTheme.formatPattern(loc.string("Usage.Tokens"), [HudTheme.formatTokens(tokens)]),
+                                pacePercent: nil)
+            }
+            let used = min(100, Double(tokens) / (budget * 1_000_000) * 100)
+            return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: used,
+                            text: "\(HudTheme.formatTokens(tokens))/\(HudTheme.formatPattern("{0:0.#}", [budget]))M",
+                            pacePercent: nil, warningPercent: warningPercent)
         }
         if stale {
             let expired = window.resetsAt.map { $0 <= now } ?? false

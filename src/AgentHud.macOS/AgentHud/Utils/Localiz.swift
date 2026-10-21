@@ -14,7 +14,8 @@ public final class Localiz {
     private let table: [String: [String: String]]
     private let languages: [LanguageOption]
     private let systemLanguage: String?
-    public private(set) var language: String
+    /// Chosen display language code; `auto` (empty) follows the system language.
+    public var language: String
     public var languageChoices: [LanguageOption] { [LanguageOption(code: Localiz.auto, name: "System Language")] + languages }
     public var effectiveLanguage: String { language.isEmpty ? (systemLanguage ?? Self.english) : language }
 

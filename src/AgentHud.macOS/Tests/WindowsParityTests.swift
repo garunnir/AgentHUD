@@ -1,0 +1,84 @@
+import Foundation
+import XCTest
+@testable import AgentHud
+
+/// Checks for the features ported from the Windows app (auto-resume, limit reset notice, memos).
+final class WindowsParityTests: XCTestCase {
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHud-tests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func session(_ id: String, type: AgentType = .claudeCode, project: String?, reset: Date?, parent: String? = nil) -> AgentSession {
+        AgentSession(id: id, agentType: type, state: .rateLimited, hasUnreadCompletion: false, completionDetectedAt: nil,
+                     processId: nil, projectPath: project, worktreePath: nil, sessionTitle: "t", currentTask: nil,
+                     startedAt: Date(), lastActivityAt: Date(), isActive: true, wakeupAt: nil, hasBackgroundTasks: false,
+                     parentSessionId: parent, rateLimitResetAt: reset, tokens5h: 0, tokensWeek: 0,
+                     primaryLimit: nil, secondaryLimit: nil, limitsUpdatedAt: nil)
+    }
+
+    func testAutoResumeRunsOnceAfterResetWithFixedCommandLine() throws {
+        let project = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        var now = reset.addingTimeInterval(30)
+        var launches: [(AutoResumer.Launch, String)] = []
+        let resumer = AutoResumer(logDirectory: project, now: { now }, locate: { $0 == .claudeCode ? "/bin/claude" : "/bin/codex" },
+                                  start: { _, launch, prompt in launches.append((launch, prompt)); return true })
+        let id = "4f9c2c1e-1111-2222-3333-444455556666"
+        let claude = session("claude:\(id.uppercased())", project: project.path, reset: reset)
+
+        resumer.check([claude], prompt: "go on")
+        XCTAssertTrue(launches.isEmpty, "Waits StartDelay after the reset")
+
+        now = reset.addingTimeInterval(AutoResumer.startDelay + 1)
+        resumer.check([claude], prompt: "go on")
+        resumer.check([claude], prompt: "go on")
+        XCTAssertEqual(launches.count, 1, "One attempt per (session, reset)")
+        XCTAssertEqual(launches.first?.0, AutoResumer.Launch(executable: "/bin/claude",
+                                                             arguments: ["--resume", id, "-p", "--permission-mode", "acceptEdits"],
+                                                             workingDirectory: project.path))
+        XCTAssertEqual(launches.first?.1, "go on")
+
+        let codex = session("codex:\(id)", type: .codex, project: project.path, reset: reset)
+        XCTAssertEqual(resumer.launch(for: codex)?.arguments,
+                       ["exec", "resume", "--skip-git-repo-check", "-c", "sandbox_mode=workspace-write", id, "-"])
+        XCTAssertNil(resumer.launch(for: session("claude:not-a-uuid", project: project.path, reset: reset)), "Only UUID IDs reach the command line")
+        XCTAssertNil(resumer.launch(for: session("opencode:\(id)", type: .openCode, project: project.path, reset: reset)))
+
+        now = reset.addingTimeInterval(CodexProvider.limitGrace + 1)
+        XCTAssertFalse(resumer.isDue(session("claude:\(UUID())", project: project.path, reset: reset)), "Old limits are left alone")
+        XCTAssertFalse(resumer.isDue(session("claude:\(UUID())", project: project.path, reset: now.addingTimeInterval(-120), parent: "p")), "Subagents are skipped")
+    }
+
+    func testLimitResetNotifiedOncePerReset() {
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        var now = reset.addingTimeInterval(-1)
+        let notifier = RateLimitNotifier(now: { now })
+        let target = session("claude:a", project: "/tmp", reset: reset)
+        XCTAssertTrue(notifier.takeDue([target]).isEmpty)
+        now = reset.addingTimeInterval(1)
+        XCTAssertEqual(notifier.takeDue([target]).map(\.id), ["claude:a"])
+        XCTAssertTrue(notifier.takeDue([target]).isEmpty)
+        var again = target
+        again.rateLimitResetAt = reset.addingTimeInterval(-10)
+        XCTAssertEqual(notifier.takeDue([again]).count, 1, "A new reset time is announced again")
+    }
+
+    func testMemoStorePersistsGlobalAndProjectMemos() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("memos.json")
+        let store = MemoStore(url: url)
+        store.setGlobal("global note")
+        store.setProject("/Users/me/project/", "project note")
+        let reloaded = MemoStore(url: url)
+        XCTAssertEqual(reloaded.global, "global note")
+        XCTAssertEqual(reloaded.project("/Users/me/project"), "project note", "Trailing slash is ignored")
+        reloaded.setProject("/Users/me/project", "  ")
+        XCTAssertFalse(MemoStore(url: url).hasProject("/Users/me/project"), "Blank text removes the memo")
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertNotNil(json?["Global"], "Same shape as the Windows memos.json")
+    }
+}
