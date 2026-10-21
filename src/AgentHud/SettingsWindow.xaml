@@ -53,6 +53,8 @@
               <TextBlock Text="{local:Tr Settings.Language}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
             </DockPanel>
             <CheckBox Margin="0,12,0,0" IsChecked="{Binding ShowWaitingSymbols, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.WaitingSymbols}"/>
+            <CheckBox Margin="0,12,0,0" IsChecked="{Binding ShowPaceMarker, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.PaceLine}"/>
+            <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.PaceLineHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
             <DockPanel Margin="0,12,0,0">
               <TextBlock DockPanel.Dock="Right" Text="{local:Tr Settings.Minutes}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0"/>
               <TextBox DockPanel.Dock="Right" Width="48" Text="{Binding CodexActiveMinutes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
