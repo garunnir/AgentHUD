@@ -5,6 +5,10 @@ Language.Name	English	한국어
 Common.Close	Close	닫기
 Main.ShowHidden	Show hidden sessions ({0})	숨긴 세션 다시 표시 ({0})
 Main.Settings	Settings...	설정...
+Main.CheckUpdate	Check for updates	업데이트 확인
+Main.CheckUpdateDev	Check for updates (release builds only)	업데이트 확인 (릴리스 빌드 전용)
+Main.InstallUpdate	Install {0}…	{0} 설치…
+Main.UpdateDotTip	{0} is available. Right-click to install.	{0} 업데이트가 있습니다. 우클릭해서 설치하세요.
 Main.Minimize	Minimize	최소화
 Main.Memo	Notepad	메모장
 Main.ProjectMemo	Project memo...	프로젝트 메모...
@@ -85,6 +89,18 @@ Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows onl
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간
 Settings.BudgetHint	Claude's real limits aren't known locally, so the sum of input + output + cache-creation tokens is compared against this budget. Codex uses the real limits reported by the server.	Claude의 실제 한도는 로컬에서 알 수 없어, 입력+출력+캐시 생성 토큰 합계를 이 예산과 비교해 표시합니다. Codex는 서버가 알려 준 실제 한도를 씁니다.
+Settings.AutoUpdate	Check for updates automatically	업데이트 자동 확인
+Settings.CheckUpdate	Check now	지금 확인
+Settings.AutoUpdateHint	Checks GitHub releases at startup and every 6 hours. Nothing pops up: a new version only shows a small dot in the header and an "Install" item in the right-click menu. Installing always asks first, then the HUD replaces its files and restarts. Pre-releases are skipped.	시작할 때와 6시간마다 GitHub 릴리스를 확인합니다. 팝업은 띄우지 않고, 새 버전이 있으면 헤더에 작은 점과 우클릭 메뉴의 "설치" 항목만 표시합니다. 설치 전에는 항상 확인을 묻고, 동의하면 HUD가 파일을 교체한 뒤 다시 시작합니다. 프리릴리스는 건너뜁니다.
+Update.Current	Current version {0}	현재 버전 {0}
+Update.Checking	Checking for updates…	업데이트 확인 중…
+Update.Confirm	Install Agent HUD {0}? (current {1})\n\nThe HUD will close, update its files and restart.	Agent HUD {0}을(를) 설치할까요? (현재 {1})\n\nHUD가 종료되어 파일을 교체한 뒤 다시 시작합니다.
+Update.UpToDate	Up to date ({0})	최신 버전입니다 ({0})
+Update.Available	{0} available — install it from the right-click menu	{0} 사용 가능 — 우클릭 메뉴에서 설치할 수 있습니다
+Update.Downloading	Downloading {0}…	{0} 내려받는 중…
+Update.Failed	Update failed: {0}	업데이트 실패: {0}
+Update.NotWritable	Can't write to the install folder, so the release page was opened instead.	설치 폴더에 쓸 수 없어 릴리스 페이지를 열었습니다.
+Update.DevBuild	Automatic updates are only available in release builds.	자동 업데이트는 릴리스 빌드에서만 동작합니다.
 Usage.Month	Month	월간
 Go.Title	OpenCode Go usage (Console, unofficial)	OpenCode Go 사용량 (Console, 비공식)
 Go.Workspace	Workspace ID	Workspace ID

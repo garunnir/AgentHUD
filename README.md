@@ -34,6 +34,7 @@ Click the `–` button in the header, or double-click the header, to shrink the 
 - Optional sounds for completion and input or approval requests
 - Remaining usage gauges with reset times and an even-pace marker; Claude limits work out of the box, no setup needed
 - Usage-limit notifications and optional automatic resume
+- Update check on Windows: a new release shows a small dot in the header and an install item in the right-click menu; nothing installs without your confirmation
 - English and Korean UI, following the system language by default or selectable in Settings
 
 ## Install on Windows
@@ -42,6 +43,7 @@ Download a ZIP from the [Releases](https://github.com/garunnir/AgentHUD/releases
 
 - `win-x64.zip` requires the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0).
 - `win-x64-self-contained.zip` includes the runtime.
+- New versions are offered quietly: a dot appears in the header and the right-click menu shows **Install vX.Y.Z…**. After you confirm, the HUD replaces its files and restarts. Keep the extracted folder somewhere writable (not `Program Files`); otherwise the release page opens instead. Turn off **Check for updates automatically** in Settings > General to opt out.
 - Windows 11 is recommended. Windows 10 works, but the HUD follows the active desktop instead of being pinned to every virtual desktop.
 
 Install at least one supported agent: Claude Code, Codex, or OpenCode. Git itself is optional.
@@ -144,7 +146,7 @@ For macOS questions and bug reports, please [open an issue](https://github.com/g
 
 ## Privacy
 
-Agent HUD has no telemetry. Session monitoring reads local agent files. The default Claude status line path makes no network request of its own. Other network access is used only for usage services you configure, such as the opt-in claude.ai cookie API; macOS can also query Codex and OpenCode Go usage endpoints for its gauges.
+Agent HUD has no telemetry. Session monitoring reads local agent files. The default Claude status line path makes no network request of its own. On Windows, the update check sends an anonymous request to the GitHub releases API at startup and every 6 hours (can be turned off in Settings). Other network access is used only for usage services you configure, such as the opt-in claude.ai cookie API; macOS can also query Codex and OpenCode Go usage endpoints for its gauges.
 
 ## FAQ
 

@@ -797,6 +797,19 @@ if (args.Contains("--discover"))
     await discovery.RefreshAsync(CancellationToken.None);
     Console.WriteLine($"HUD registry: {liveRegistry.GetAllAgents().Count} sessions, {liveRegistry.GetActiveAgents().Count} active");
 }
+var releaseJson = """
+{"tag_name":"v0.15.0","prerelease":false,"draft":false,"html_url":"https://github.com/garunnir/AgentHUD/releases/tag/v0.15.0","assets":[
+ {"name":"AgentHud-v0.15.0-win-x64-self-contained.zip","browser_download_url":"https://example/sc.zip","digest":"sha256:ABC"},
+ {"name":"AgentHud-v0.15.0-win-x64.zip","browser_download_url":"https://example/fd.zip","digest":"sha256:DEF"}]}
+""";
+var fdUpdate = UpdateChecker.Pick(releaseJson, new Version(0, 14, 1, 0), "-win-x64.zip");
+Assert(fdUpdate is { AssetUrl: "https://example/fd.zip", Sha256: "def", Tag: "v0.15.0" }, "update picks framework-dependent zip, not self-contained");
+Assert(UpdateChecker.Pick(releaseJson, new Version(0, 14, 1), "-win-x64-self-contained.zip")?.AssetUrl == "https://example/sc.zip", "update picks self-contained zip");
+Assert(UpdateChecker.Pick(releaseJson, new Version(0, 15, 0, 0), "-win-x64.zip") is null, "same version (0.15.0 vs 0.15.0.0) is not an update");
+Assert(UpdateChecker.Pick(releaseJson, new Version(0, 16, 0), "-win-x64.zip") is null, "older release is not an update");
+Assert(UpdateChecker.Pick(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true"), new Version(0, 14, 1), "-win-x64.zip") is null, "prerelease is skipped");
+Assert(UpdateChecker.Pick(releaseJson, new Version(0, 14, 1), "-macos-arm64.zip") is null, "missing asset is not an update");
+Assert(UpdateChecker.ParseTag("v1.2.0-beta") is null && UpdateChecker.ParseTag("v0.10.0") > UpdateChecker.ParseTag("v0.9.3"), "tag parsing compares numerically and skips pre-release tags");
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }
 
 sealed class TestTimeProvider : TimeProvider

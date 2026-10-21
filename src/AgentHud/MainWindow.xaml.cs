@@ -174,9 +174,78 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateSessions();
             PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
             PropertyChanged?.Invoke(this, new(nameof(OpenCodeGoStatus)));
+            PropertyChanged?.Invoke(this, new(nameof(UpdateStatus)));
+            PropertyChanged?.Invoke(this, new(nameof(UpdateMenuText)));
+            PropertyChanged?.Invoke(this, new(nameof(UpdateDotToolTip)));
             UpdateUsage(_registry.GetAllAgents());
         }
     }
+    // 자동 업데이트: 시작 시와 6시간마다 GitHub 최신 릴리스를 확인. 팝업으로 재촉하지 않고 헤더 점 + 우클릭 메뉴 문구만 바꾸며,
+    // 설치는 사용자가 메뉴(또는 설정의 "지금 확인")에서 고르고 확인 창에 동의할 때만 진행
+    private readonly AppUpdater _updater = new(DataDirectory);
+    private bool _autoUpdateCheck = true;
+    public bool AutoUpdateCheck { get => _autoUpdateCheck; set { SetField(ref _autoUpdateCheck, value, nameof(AutoUpdateCheck)); if (value) _ = CheckForUpdateAsync(false); } }
+    public bool UpdateSupported => _updater.Supported;
+    private string? _updateStatus;
+    public string UpdateStatus { get => _updateStatus ?? (_updater.Supported ? Loc.F("Update.Current", _updater.CurrentText) : Loc.T("Update.DevBuild")); private set => SetField(ref _updateStatus, value, nameof(UpdateStatus)); }
+    private UpdateRelease? _pendingUpdate;
+    private UpdateRelease? PendingUpdate
+    {
+        get => _pendingUpdate;
+        set
+        {
+            _pendingUpdate = value;
+            PropertyChanged?.Invoke(this, new(nameof(UpdateMenuText)));
+            PropertyChanged?.Invoke(this, new(nameof(UpdateDotVisibility)));
+            PropertyChanged?.Invoke(this, new(nameof(UpdateDotToolTip)));
+        }
+    }
+    // 개발 빌드(UpdateAsset 메타데이터 없음)에서도 메뉴는 보이되 비활성 + 이유 표시
+    public string UpdateMenuText => !_updater.Supported ? Loc.T("Main.CheckUpdateDev") : PendingUpdate is { } r ? Loc.F("Main.InstallUpdate", r.Tag) : Loc.T("Main.CheckUpdate");
+    public Visibility UpdateDotVisibility => PendingUpdate is null ? Visibility.Collapsed : Visibility.Visible;
+    public string? UpdateDotToolTip => PendingUpdate is { } r ? Loc.F("Main.UpdateDotTip", r.Tag) : null;
+    private bool _updateBusy;
+    private async void StartUpdateTimer()
+    {
+        if (!_updater.Supported) return;
+        await Task.Delay(TimeSpan.FromSeconds(15));
+        using var timer = new PeriodicTimer(TimeSpan.FromHours(6));
+        do { if (AutoUpdateCheck) await CheckForUpdateAsync(false); } while (await timer.WaitForNextTickAsync());
+    }
+    // manual이면 결과를 대화상자로 알리고, 새 버전이 있으면 바로 설치 여부를 묻는다
+    public async Task CheckForUpdateAsync(bool manual)
+    {
+        if (!_updater.Supported || _updateBusy) return;
+        _updateBusy = true;
+        if (manual) UpdateStatus = Loc.T("Update.Checking");
+        try
+        {
+            PendingUpdate = await _updater.CheckAsync();
+            UpdateStatus = PendingUpdate is { } r ? Loc.F("Update.Available", r.Tag) : Loc.F("Update.UpToDate", _updater.CurrentText);
+        }
+        catch (Exception e) when (e is System.Net.Http.HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            if (manual) { UpdateStatus = Loc.F("Update.Failed", e.Message); MessageBox.Show(UpdateStatus, "Agent HUD"); }
+            return;
+        }
+        finally { _updateBusy = false; }
+        if (!manual) return;
+        if (PendingUpdate is null) MessageBox.Show(UpdateStatus, "Agent HUD");
+        else await InstallUpdateAsync();
+    }
+    public async Task InstallUpdateAsync()
+    {
+        if (PendingUpdate is not { } release || _updateBusy) return;
+        if (MessageBox.Show(Loc.F("Update.Confirm", release.Tag, _updater.CurrentText), "Agent HUD", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        // 설치 폴더에 쓸 수 없으면 직접 받도록 릴리스 페이지를 연다
+        if (!AppUpdater.CanWriteInstallDir()) { ShellOpen(release.PageUrl); UpdateStatus = Loc.T("Update.NotWritable"); return; }
+        _updateBusy = true;
+        UpdateStatus = Loc.F("Update.Downloading", release.Tag);
+        try { await _updater.PrepareAsync(release); }
+        catch (Exception e) { UpdateStatus = Loc.F("Update.Failed", e.Message); _updateBusy = false; MessageBox.Show(UpdateStatus, "Agent HUD"); return; }
+        Close();
+    }
+    private void UpdateMenu_OnClick(object sender, RoutedEventArgs e) => _ = PendingUpdate is null ? CheckForUpdateAsync(true) : InstallUpdateAsync();
     private SettingsWindow? _settingsWindow;
     private void Settings_OnClick(object sender, RoutedEventArgs e)
     {
@@ -200,13 +269,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _codex = new CodexProvider(home);
         _claudeApi.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus))); UpdateUsage(_registry.GetAllAgents()); });
-        Closed += (_, _) => { _claudeApi.Dispose(); _openCodeGo.Dispose(); };
+        Closed += (_, _) => { _claudeApi.Dispose(); _openCodeGo.Dispose(); _updater.Dispose(); };
         _openCodeGo.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(OpenCodeGoStatus))); UpdateUsage(_registry.GetAllAgents()); });
         _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex, new OpenCodeProvider(home, dataHome: Environment.GetEnvironmentVariable("XDG_DATA_HOME"))], _registry);
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => _desktopFollower?.Dispose();
-        Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); };
+        Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); StartUpdateTimer(); };
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
         SizeChanged += (_, _) => { if (_minimized) Left = _anchorRight - ActualWidth; };
@@ -470,7 +539,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
     }
     // 기존 사용자 마이그레이션: placement.json에 선택 기록이 없으면(처음 실행 또는 이전 버전 업그레이드) statusLine을
     // 조용히 한 번 연동(기본값, 실패해도 다음 실행에서 재시도). sessionKey API는 이미 키+Org ID를 설정해 둔
@@ -483,9 +552,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true);
 }
 
 

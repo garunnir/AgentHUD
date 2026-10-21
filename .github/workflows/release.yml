@@ -29,8 +29,8 @@ jobs:
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
           $common = @('src/AgentHud/AgentHud.csproj', '-c', 'Release', '-r', 'win-x64', '-p:PublishSingleFile=true', '-p:DebugType=none', "-p:Version=$version")
-          dotnet publish @common --self-contained false -o publish/fd
-          dotnet publish @common --self-contained true -o publish/sc
+          dotnet publish @common --self-contained false -p:UpdateAsset=win-x64.zip -o publish/fd
+          dotnet publish @common --self-contained true -p:UpdateAsset=win-x64-self-contained.zip -o publish/sc
           foreach ($dir in 'publish/fd', 'publish/sc') { Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md $dir }
           Compress-Archive publish/fd/* "AgentHud-${{ github.ref_name }}-win-x64.zip"
           Compress-Archive publish/sc/* "AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip"

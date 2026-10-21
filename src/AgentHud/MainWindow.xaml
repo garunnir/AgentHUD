@@ -79,6 +79,7 @@
           </MenuItem.Style>
         </MenuItem>
         <Separator/>
+        <MenuItem Header="{Binding UpdateMenuText}" IsEnabled="{Binding UpdateSupported, Mode=OneWay}" Click="UpdateMenu_OnClick"/>
         <MenuItem Header="{local:Tr Main.Settings}" Click="Settings_OnClick"/>
       </ContextMenu>
     </Border.ContextMenu>
@@ -93,6 +94,8 @@
         <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Minimize}"/>
         <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Memo}"/>
         <TextBlock Text="{Binding ActiveCount}" Foreground="White" FontWeight="Bold" Margin="8,0,0,0"/>
+        <!-- 새 버전이 있으면 작은 점만 표시. 설치는 우클릭 메뉴에서 -->
+        <Ellipse Width="6" Height="6" Fill="#7AB8FF" Margin="6,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left" Visibility="{Binding UpdateDotVisibility}" ToolTip="{Binding UpdateDotToolTip}"/>
       </DockPanel>
       </Border>
       <ListBox Grid.Row="1" ItemsSource="{Binding Sessions}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="List_OnMouseDoubleClick">

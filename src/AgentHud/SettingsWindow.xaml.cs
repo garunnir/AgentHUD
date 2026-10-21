@@ -35,5 +35,11 @@ public partial class SettingsWindow : Window
         try { await main.RefreshOpenCodeAsync(); } finally { button.IsEnabled = true; }
     }
     private void OpenCodeLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutOpenCode(); }
+    private async void CheckUpdate_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindow main || sender is not System.Windows.Controls.Button button) return;
+        button.IsEnabled = false;
+        try { await main.CheckForUpdateAsync(true); } finally { button.IsEnabled = true; }
+    }
     private void DeleteKey_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.SetClaudeSessionKey(null); }
 }
