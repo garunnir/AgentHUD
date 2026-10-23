@@ -1,4 +1,5 @@
 using AgentHud;
+using AgentHud.Cleanup;
 using AgentHud.Discovery;
 using AgentHud.Models;
 
@@ -810,6 +811,104 @@ Assert(UpdateChecker.Pick(releaseJson, new Version(0, 16, 0), "-win-x64.zip") is
 Assert(UpdateChecker.Pick(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true"), new Version(0, 14, 1), "-win-x64.zip") is null, "prerelease is skipped");
 Assert(UpdateChecker.Pick(releaseJson, new Version(0, 14, 1), "-macos-arm64.zip") is null, "missing asset is not an update");
 Assert(UpdateChecker.ParseTag("v1.2.0-beta") is null && UpdateChecker.ParseTag("v0.10.0") > UpdateChecker.ParseTag("v0.9.3"), "tag parsing compares numerically and skips pre-release tags");
+// 오래된 세션 정리: 가짜 프로세스 목록으로 트리 구성·세션 연결·안전 규칙을 확인한다(실제 프로세스를 건드리지 않음)
+{
+    var t0 = new DateTime(2026, 10, 23, 9, 0, 0, DateTimeKind.Utc);
+    ProcessRecord P(int pid, int ppid, string name, int startMinutes, long mb, string? cmd = null)
+        => new(pid, ppid, name, t0.AddMinutes(startMinutes), mb * 1024 * 1024, cmd);
+    var processes = new List<ProcessRecord>
+    {
+        P(10, 0, "explorer.exe", -10, 50), P(100, 10, "Code.exe", 0, 800),
+        // 세션 A: claude.exe + MCP 자손(uvx → python), 그리고 node
+        P(200, 100, "claude.exe", 1, 100), P(210, 200, "uvx.exe", 2, 20), P(211, 210, "python.exe", 3, 300), P(220, 200, "node.exe", 2, 80),
+        // 세션 없는 orphan
+        P(300, 100, "claude.exe", 5, 120), P(310, 300, "conhost.exe", 6, 10),
+        // 작업 중인 세션 B
+        P(400, 100, "claude.exe", 7, 140),
+        // codex: app-server(공유) / 명령줄에 세션 id(연결 가능) / 단서 없음(모호)
+        P(500, 100, "codex.exe", 8, 200, "codex.exe app-server"),
+        P(600, 100, "codex.exe", 9, 150, "codex.exe exec resume 11112222-3333-4444-5555-666677778888"),
+        P(700, 100, "codex.exe", 10, 160, "codex.exe"),
+        // VS Code를 띄운 트리 → 보호
+        P(800, 100, "claude.exe", 11, 130), P(810, 800, "Code.exe", 12, 700),
+        // HUD 자신이 자손 → 보호
+        P(900, 100, "claude.exe", 12, 110), P(910, 900, "AgentHud.exe", 13, 90),
+        // PID 재사용: 자식이 부모보다 먼저 시작 → 자식으로 붙이지 않음
+        P(1000, 100, "claude.exe", 13, 100), P(1010, 1000, "python.exe", 1, 500),
+        // claude가 codex를 띄워 한 프로세스가 두 트리에 속함 → 양쪽 모두 종료 금지
+        P(1300, 100, "claude.exe", 16, 100), P(1310, 1300, "codex.exe", 17, 100, "codex.exe exec")
+    };
+    var sessionA = new AgentSession { Id = "claude:a", AgentType = AgentType.ClaudeCode, ProcessId = 200, State = AgentState.Idle, ProjectPath = "C:\\repo\\a", SessionTitle = "Session A", LastActivityAt = t0.AddHours(2), StartedAt = t0 };
+    var sessionB = new AgentSession { Id = "claude:b", AgentType = AgentType.ClaudeCode, ProcessId = 400, State = AgentState.Working, ProjectPath = "C:\\repo\\b", SessionTitle = "Session B", LastActivityAt = t0.AddHours(3), StartedAt = t0, IsActive = true };
+    var sessionC = new AgentSession { Id = "codex:11112222-3333-4444-5555-666677778888", AgentType = AgentType.Codex, State = AgentState.Idle, ProjectPath = "C:\\repo\\c", SessionTitle = "Session C", LastActivityAt = t0.AddHours(1), StartedAt = t0 };
+    var cleanupRows = ProcessCleanup.Build(processes, [sessionA, sessionB, sessionC], selfPid: 910);
+    CleanupRow Row(int pid) => cleanupRows.First(x => x.Pid == pid);
+    Assert(cleanupRows.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([200, 300, 400, 500, 600, 700, 800, 900, 1000, 1300, 1310]),
+        "every claude/codex process whose parent is not the same agent becomes a tree root");
+    Assert(Row(200).Tree.Count == 4 && Row(200).Tree.Pids.OrderBy(x => x).SequenceEqual([200, 210, 211, 220]),
+        "a tree collects nested descendants (uvx → python), not just direct children");
+    Assert(Row(200).Tree.WorkingSet == (100 + 20 + 300 + 80) * 1024L * 1024, "tree memory is the sum of the whole tree");
+    Assert(Row(200).Session?.Id == "claude:a" && !Row(200).Ambiguous && Row(200).CanTerminate, "a claude tree is matched to its session by PID");
+    Assert(Row(300).Session is null && !Row(300).Ambiguous && Row(300).CanTerminate && Row(300).Tree.Count == 2,
+        "a claude tree with no session is an orphan and may be terminated");
+    Assert(Row(400).IsActive && Row(400).CanTerminate, "a working session is terminable but marked active");
+    Assert(Row(500).Guard == CleanupGuard.SharedSession && !Row(500).CanTerminate, "codex app-server hosts several conversations and is never terminable");
+    Assert(Row(600).Session?.Id == sessionC.Id && Row(600).CanTerminate && !Row(600).Ambiguous, "a codex tree is matched when its command line carries the session id");
+    Assert(Row(700).Session is null && Row(700).Ambiguous, "a codex tree with no session clue stays unknown");
+    Assert(Row(800).Guard == CleanupGuard.ProtectedProcess && !Row(800).CanTerminate, "a tree containing VS Code is never terminable");
+    Assert(Row(900).Guard == CleanupGuard.SelfProcess && !Row(900).CanTerminate, "a tree containing Agent HUD itself is never terminable");
+    Assert(Row(1000).Tree.Count == 1, "a child that started before its parent is not attached (PID reuse guard)");
+    Assert(Row(1300).Guard == CleanupGuard.SharedProcess && Row(1310).Guard == CleanupGuard.SharedProcess,
+        "a process belonging to two trees blocks both trees");
+    Assert(ProcessCleanup.TotalProcesses(cleanupRows) > 0 && ProcessCleanup.TotalWorkingSet(cleanupRows) == cleanupRows.Sum(x => x.Tree.WorkingSet), "totals add up over all trees");
+    Assert(cleanupRows.Select(x => x.LastActivityAt).SequenceEqual(cleanupRows.Select(x => x.LastActivityAt).OrderByDescending(x => x)), "rows are listed most recent first");
+    var keepOne = ProcessCleanup.SelectAllButLatest(cleanupRows, 1, includeActive: false);
+    Assert(keepOne.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([600]),
+        "keep latest 1 selects every other eligible session tree and skips active, shared, protected, unknown and orphan ones");
+    var withActive = ProcessCleanup.SelectAllButLatest(cleanupRows, 1, includeActive: true);
+    Assert(withActive.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([200, 600]),
+        "including active sessions makes the working session the newest one that is kept");
+    Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 99, includeActive: true).Count == 0, "keeping more than exists selects nothing");
+    Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 0, includeActive: true).All(x => x.CanTerminate && x.Session is not null),
+        "keep 0 still never auto-selects orphan or unknown trees (they may belong to tools outside the HUD)");
+    Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 0, includeActive: false).All(x => x.CanTerminate && !x.Ambiguous && !x.IsActive), "keep 0 still respects every safety rule");
+    var snapshot = Row(300).Tree.Root;
+    Assert(ProcessCleanup.StillMatches(snapshot, snapshot with { StartedAt = snapshot.StartedAt.AddSeconds(1) }), "a one-second start-time difference is the same process");
+    Assert(!ProcessCleanup.StillMatches(snapshot, null), "a process that is gone does not match");
+    Assert(!ProcessCleanup.StillMatches(snapshot, snapshot with { Name = "python.exe" }), "a reused PID with another name does not match");
+    Assert(!ProcessCleanup.StillMatches(snapshot, snapshot with { StartedAt = snapshot.StartedAt.AddMinutes(1) }), "a reused PID with another start time does not match");
+    Assert(ProcessCleanup.Describe(cleanupRows).Contains("orphan") && ProcessCleanup.Describe(cleanupRows).StartsWith("11 tree(s)"), "dry-run description lists every tree");
+    Assert(CimDateTime.Parse("20261023153045.123456+540") == new DateTime(2026, 10, 23, 6, 30, 45, DateTimeKind.Utc).AddTicks(1234560), "WMI CreationDate is read as UTC");
+    Assert(CimDateTime.Parse("20261023153045.123456-060") == new DateTime(2026, 10, 23, 16, 30, 45, DateTimeKind.Utc).AddTicks(1234560), "a negative WMI offset is added back");
+    Assert(CimDateTime.Parse(null) is null && CimDateTime.Parse("not a date") is null, "a bad CreationDate is ignored");
+    // npm 설치(claude.cmd → node.exe)는 세션이 기록한 PID로 루트를 찾되, PID가 재사용된 엉뚱한 프로그램은 루트가 되지 않는다
+    var hostProcesses = new List<ProcessRecord> { P(100, 10, "Code.exe", 0, 800), P(2000, 100, "node.exe", 1, 90), P(2010, 2000, "python.exe", 2, 40), P(2100, 100, "chrome.exe", 1, 500) };
+    var hostRows = ProcessCleanup.Build(hostProcesses, [sessionA with { Id = "claude:npm", ProcessId = 2000 }, sessionA with { Id = "claude:recycled", ProcessId = 2100 }], selfPid: 1);
+    Assert(hostRows.Count == 1 && hostRows[0].Pid == 2000 && hostRows[0].Tree.Count == 2 && hostRows[0].Session?.Id == "claude:npm",
+        "a node.exe claimed by a session is an agent root and brings its descendants along");
+    Assert(hostRows.All(x => x.Pid != 2100), "a session PID that now belongs to an unrelated program does not become a tree");
+    // Claude 데스크톱 앱(claude.exe, Electron)은 CLI와 이름이 같아도 보호. 브라우저 MCP의 chrome --type=renderer는 보호 사유가 아니다
+    var desktopProcesses = new List<ProcessRecord>
+    {
+        P(10, 0, "explorer.exe", -10, 50),
+        P(3000, 10, "claude.exe", 0, 300) with { ExecutablePath = @"C:\Users\u\AppData\Local\AnthropicClaude\app-1.0.0\claude.exe" },
+        P(3010, 3000, "claude.exe", 1, 200, "claude.exe --type=renderer"),
+        P(3100, 10, "claude.exe", 0, 300, "claude.exe"), P(3110, 3100, "claude.exe", 1, 200, "claude.exe --type=gpu-process"),
+        P(3200, 10, "claude.exe", 0, 100, "claude.exe") with { ExecutablePath = @"C:\Users\u\.vscode\extensions\anthropic.claude-code-2.1.301-win32-x64\resources\native-binary\claude.exe" },
+        P(3210, 3200, "chrome.exe", 1, 400, "chrome.exe --type=renderer")
+    };
+    var desktopRows = ProcessCleanup.Build(desktopProcesses, [], selfPid: 1);
+    Assert(desktopRows.Count == 3 && desktopRows.First(x => x.Pid == 3000).Guard == CleanupGuard.ProtectedProcess,
+        "the Claude desktop app install path is protected even though it is named claude.exe");
+    Assert(desktopRows.First(x => x.Pid == 3100).Guard == CleanupGuard.ProtectedProcess, "a claude.exe with Electron children of the same name is protected");
+    Assert(desktopRows.First(x => x.Pid == 3200).CanTerminate, "a CLI tree with a browser MCP (chrome --type=renderer) stays terminable");
+    Assert(ProcessCleanup.SelectAllButLatest(desktopRows, 0, includeActive: true).Count == 0, "orphan trees are never auto-selected");
+    // 같은 PID를 기록한 세션 파일이 둘 남아 있어도 목록 만들기가 실패하지 않는다
+    var dupRows = ProcessCleanup.Build(processes, [sessionA, sessionA with { Id = "claude:a2" }], selfPid: 1);
+    Assert(dupRows.First(x => x.Pid == 200).SessionCount == 2 && dupRows.First(x => x.Pid == 200).Guard == CleanupGuard.SharedSession,
+        "two sessions claiming one PID do not crash and block the tree as shared");
+}
+Console.WriteLine("All checks passed.");
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }
 
 sealed class TestTimeProvider : TimeProvider
