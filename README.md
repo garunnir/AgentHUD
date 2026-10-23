@@ -31,6 +31,7 @@ Click the `–` button in the header, or double-click the header, to shrink the 
 - Appears on every Windows virtual desktop
 - Hide individual sessions with `×`; waiting or completed sessions reappear when they need attention
 - Global and per-project memos
+- Cleanup window for agent process trees left behind by closed chat tabs, with shared and active sessions protected (Windows)
 - Optional sounds for completion and input or approval requests
 - Remaining usage gauges with reset times and an even-pace marker; Claude limits work out of the box, no setup needed
 - Usage-limit notifications and optional automatic resume
@@ -56,6 +57,24 @@ Install at least one supported agent: Claude Code, Codex, or OpenCode. Git itsel
 - Hover a session and click `×` to hide it. If it later needs input or completes, it reappears automatically.
 - Right-click the HUD and choose **Show hidden sessions** to restore every hidden session. Hidden state resets when Agent HUD exits.
 - Use the memo button in the header for a general note. Right-click a session and choose **Project memo...** for a project-specific note.
+
+### Cleaning up old sessions (Windows)
+
+Every Claude Code or Codex chat tab you open in VS Code starts its own `claude.exe` / `codex.exe`, and each of those starts its own MCP children (`uvx`, `python`, `node`, relay executables, shells). Tabs you never closed keep all of that alive, which can add up to gigabytes. Right-click the HUD and choose **Clean up old sessions...** (or Settings → General → **Open...**) to see what is running and terminate what you no longer need.
+
+Each row is one agent process tree: agent, PID, conversation title and project (or *(no session, orphan)* when nothing in the HUD matches it), state, last activity, start time, how many processes the tree holds, and its total memory. The footer shows the total for every tree and for your current selection. Opening the window only lists — nothing is terminated until you select rows and confirm the dialog.
+
+- **Select all but latest** keeps the N most recent eligible trees (by last activity, or start time for orphans) and selects the rest. N is saved in Settings.
+- **Include active sessions** lets a session that is working or waiting for input or approval be auto-selected. It is off by default.
+- **Terminate selected** kills the agent process and its children, after a confirmation dialog that shows the process count and memory to be freed. Results are reported in the window and appended to `%LOCALAPPDATA%\AgentHud\cleanup.log`.
+
+Safety rules, applied before anything can be selected:
+
+- Only an agent process and its own descendants are ever terminated. Whatever started them — VS Code, the extension host, your shell — is an ancestor, never part of the tree.
+- A tree that contains VS Code, Agent HUD itself, or another shared process is never terminable, and neither is a process that belongs to two trees at once (for example a Codex CLI started by a Claude session).
+- A `codex app-server` process hosts several conversations at once, so it is listed but never terminable; killing it would disconnect every open Codex tab.
+- Codex sessions record no PID, so a Codex tree is only matched to a conversation when its command line carries the session id. Anything else stays *(unknown session)*: it is shown and can be checked by hand, but is never auto-selected.
+- Right before each kill, the PID is read again and its name and start time are compared with the list. If a PID was recycled in the meantime, that row is skipped and reported.
 
 ### VS Code integration
 
