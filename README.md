@@ -64,7 +64,7 @@ Every Claude Code or Codex chat tab you open in VS Code starts its own `claude.e
 
 Each row is one agent process tree: agent, PID, conversation title and project (or *(no session, orphan)* when nothing in the HUD matches it), state, last activity, start time, how many processes the tree holds, and its total memory. The footer shows the total for every tree and for your current selection. Opening the window only lists — nothing is terminated until you select rows and confirm the dialog.
 
-- **Select all but latest** keeps the N most recent eligible trees (by last activity, or start time for orphans) and selects the rest. N is saved in Settings.
+- **Select all but latest** keeps the N most recent eligible session trees (by last activity) and selects the rest. Trees with no matching session (*orphan* or *unknown*) are never auto-selected, since they may belong to scripts or other tools; check them by hand if you want them gone. N is saved in Settings.
 - **Include active sessions** lets a session that is working or waiting for input or approval be auto-selected. It is off by default.
 - **Terminate selected** kills the agent process and its children, after a confirmation dialog that shows the process count and memory to be freed. Results are reported in the window and appended to `%LOCALAPPDATA%\AgentHud\cleanup.log`.
 
@@ -72,6 +72,7 @@ Safety rules, applied before anything can be selected:
 
 - Only an agent process and its own descendants are ever terminated. Whatever started them — VS Code, the extension host, your shell — is an ancestor, never part of the tree.
 - A tree that contains VS Code, Agent HUD itself, or another shared process is never terminable, and neither is a process that belongs to two trees at once (for example a Codex CLI started by a Claude session).
+- The Claude desktop app is also named `claude.exe`; it is recognized by its install path or its Electron child processes and is never terminable.
 - A `codex app-server` process hosts several conversations at once, so it is listed but never terminable; killing it would disconnect every open Codex tab.
 - Codex sessions record no PID, so a Codex tree is only matched to a conversation when its command line carries the session id. Anything else stays *(unknown session)*: it is shown and can be checked by hand, but is never auto-selected.
 - Right before each kill, the PID is read again and its name and start time are compared with the list. If a PID was recycled in the meantime, that row is skipped and reported.

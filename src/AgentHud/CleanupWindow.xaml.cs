@@ -115,7 +115,7 @@ public partial class CleanupWindow : Window, INotifyPropertyChanged
             var rows = await Task.Run(() =>
             {
                 try { return ProcessCleanup.Build(_lister, sessions, self); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { return null; }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { return null; }
             });
             Items.Clear();
             if (rows is null) { Status = Loc.T("Cleanup.ListFailed"); }

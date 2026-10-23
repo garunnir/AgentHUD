@@ -863,12 +863,14 @@ Assert(UpdateChecker.ParseTag("v1.2.0-beta") is null && UpdateChecker.ParseTag("
     Assert(ProcessCleanup.TotalProcesses(cleanupRows) > 0 && ProcessCleanup.TotalWorkingSet(cleanupRows) == cleanupRows.Sum(x => x.Tree.WorkingSet), "totals add up over all trees");
     Assert(cleanupRows.Select(x => x.LastActivityAt).SequenceEqual(cleanupRows.Select(x => x.LastActivityAt).OrderByDescending(x => x)), "rows are listed most recent first");
     var keepOne = ProcessCleanup.SelectAllButLatest(cleanupRows, 1, includeActive: false);
-    Assert(keepOne.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([300, 600, 1000]),
-        "keep latest 1 selects every other eligible tree and skips active, shared, protected and unknown ones");
+    Assert(keepOne.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([600]),
+        "keep latest 1 selects every other eligible session tree and skips active, shared, protected, unknown and orphan ones");
     var withActive = ProcessCleanup.SelectAllButLatest(cleanupRows, 1, includeActive: true);
-    Assert(withActive.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([200, 300, 600, 1000]),
+    Assert(withActive.Select(x => x.Pid).OrderBy(x => x).SequenceEqual([200, 600]),
         "including active sessions makes the working session the newest one that is kept");
     Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 99, includeActive: true).Count == 0, "keeping more than exists selects nothing");
+    Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 0, includeActive: true).All(x => x.CanTerminate && x.Session is not null),
+        "keep 0 still never auto-selects orphan or unknown trees (they may belong to tools outside the HUD)");
     Assert(ProcessCleanup.SelectAllButLatest(cleanupRows, 0, includeActive: false).All(x => x.CanTerminate && !x.Ambiguous && !x.IsActive), "keep 0 still respects every safety rule");
     var snapshot = Row(300).Tree.Root;
     Assert(ProcessCleanup.StillMatches(snapshot, snapshot with { StartedAt = snapshot.StartedAt.AddSeconds(1) }), "a one-second start-time difference is the same process");
@@ -885,6 +887,26 @@ Assert(UpdateChecker.ParseTag("v1.2.0-beta") is null && UpdateChecker.ParseTag("
     Assert(hostRows.Count == 1 && hostRows[0].Pid == 2000 && hostRows[0].Tree.Count == 2 && hostRows[0].Session?.Id == "claude:npm",
         "a node.exe claimed by a session is an agent root and brings its descendants along");
     Assert(hostRows.All(x => x.Pid != 2100), "a session PID that now belongs to an unrelated program does not become a tree");
+    // Claude 데스크톱 앱(claude.exe, Electron)은 CLI와 이름이 같아도 보호. 브라우저 MCP의 chrome --type=renderer는 보호 사유가 아니다
+    var desktopProcesses = new List<ProcessRecord>
+    {
+        P(10, 0, "explorer.exe", -10, 50),
+        P(3000, 10, "claude.exe", 0, 300) with { ExecutablePath = @"C:\Users\u\AppData\Local\AnthropicClaude\app-1.0.0\claude.exe" },
+        P(3010, 3000, "claude.exe", 1, 200, "claude.exe --type=renderer"),
+        P(3100, 10, "claude.exe", 0, 300, "claude.exe"), P(3110, 3100, "claude.exe", 1, 200, "claude.exe --type=gpu-process"),
+        P(3200, 10, "claude.exe", 0, 100, "claude.exe") with { ExecutablePath = @"C:\Users\u\.vscode\extensions\anthropic.claude-code-2.1.301-win32-x64\resources\native-binary\claude.exe" },
+        P(3210, 3200, "chrome.exe", 1, 400, "chrome.exe --type=renderer")
+    };
+    var desktopRows = ProcessCleanup.Build(desktopProcesses, [], selfPid: 1);
+    Assert(desktopRows.Count == 3 && desktopRows.First(x => x.Pid == 3000).Guard == CleanupGuard.ProtectedProcess,
+        "the Claude desktop app install path is protected even though it is named claude.exe");
+    Assert(desktopRows.First(x => x.Pid == 3100).Guard == CleanupGuard.ProtectedProcess, "a claude.exe with Electron children of the same name is protected");
+    Assert(desktopRows.First(x => x.Pid == 3200).CanTerminate, "a CLI tree with a browser MCP (chrome --type=renderer) stays terminable");
+    Assert(ProcessCleanup.SelectAllButLatest(desktopRows, 0, includeActive: true).Count == 0, "orphan trees are never auto-selected");
+    // 같은 PID를 기록한 세션 파일이 둘 남아 있어도 목록 만들기가 실패하지 않는다
+    var dupRows = ProcessCleanup.Build(processes, [sessionA, sessionA with { Id = "claude:a2" }], selfPid: 1);
+    Assert(dupRows.First(x => x.Pid == 200).SessionCount == 2 && dupRows.First(x => x.Pid == 200).Guard == CleanupGuard.SharedSession,
+        "two sessions claiming one PID do not crash and block the tree as shared");
 }
 Console.WriteLine("All checks passed.");
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }

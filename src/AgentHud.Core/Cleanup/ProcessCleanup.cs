@@ -95,6 +95,14 @@ public static class ProcessCleanup
         "code", "code - insiders", "codium", "electron", "devenv", "rider64", "idea64",
         "agenthud", "explorer", "winlogon", "wininit", "csrss", "services", "lsass", "svchost", "system", "smss"
     };
+    // Claude 데스크톱 앱도 claude.exe라 이름만으로는 CLI와 구분되지 않는다. 설치 경로(Squirrel: %LOCALAPPDATA%\AnthropicClaude,
+    // MSIX: WindowsApps)나 루트와 같은 이름의 Electron 자식(claude.exe --type=renderer 등)이 보이면 데스크톱 앱으로 보고 보호한다.
+    // 이름 비교를 하는 이유: 브라우저 MCP(Playwright 등)가 띄운 chrome.exe --type=renderer는 정상적인 자손이다
+    private static readonly string[] ProtectedPathParts = [@"\AnthropicClaude\", @"\WindowsApps\"];
+    private static bool IsProtected(ProcessRecord p, ProcessRecord root) => ProtectedNames.Contains(p.BaseName)
+        || p.ExecutablePath is { } path && ProtectedPathParts.Any(part => path.Contains(part, StringComparison.OrdinalIgnoreCase))
+        || p.Pid != root.Pid && string.Equals(p.BaseName, root.BaseName, StringComparison.OrdinalIgnoreCase)
+            && p.CommandLine is { } line && line.Contains(" --type=", StringComparison.OrdinalIgnoreCase);
     /// <summary>진행 중이거나 사람을 기다리는 세션. 기본적으로 자동 선택에서 제외</summary>
     public static bool IsBusy(AgentState state) => state is AgentState.Starting or AgentState.Working or AgentState.Thinking
         or AgentState.WaitingForInput or AgentState.WaitingForApproval;
@@ -104,8 +112,9 @@ public static class ProcessCleanup
     {
         var byPid = new Dictionary<int, ProcessRecord>();
         foreach (var p in processes) byPid[p.Pid] = p;
-        // 세션이 알려 준 PID도 에이전트 루트 후보
-        var sessionPids = sessions.Where(x => x.ProcessId is > 0).ToDictionary(x => x.ProcessId!.Value, x => x.AgentType);
+        // 세션이 알려 준 PID도 에이전트 루트 후보. 한 PID에 세션 파일이 둘 남아 있을 수 있어 첫 번째만 쓴다
+        var sessionPids = new Dictionary<int, AgentType>();
+        foreach (var s in sessions) if (s.ProcessId is int pid && pid > 0) sessionPids.TryAdd(pid, s.AgentType);
         var children = new Dictionary<int, List<ProcessRecord>>();
         foreach (var p in byPid.Values)
         {
@@ -133,7 +142,7 @@ public static class ProcessCleanup
             var matched = Match(tree, sessions);
             var guard =
                 pids.Contains(selfPid) || pids.Overlaps(selfChain) ? CleanupGuard.SelfProcess
-                : tree.Processes.Any(x => ProtectedNames.Contains(x.BaseName)) ? CleanupGuard.ProtectedProcess
+                : tree.Processes.Any(x => IsProtected(x, tree.Root)) ? CleanupGuard.ProtectedProcess
                 : pids.Any(pid => treeCount[pid] > 1) ? CleanupGuard.SharedProcess
                 : matched.Count > 1 || IsSharedHost(tree) ? CleanupGuard.SharedSession
                 : CleanupGuard.None;
@@ -148,9 +157,12 @@ public static class ProcessCleanup
     public static IReadOnlyList<CleanupRow> Build(IProcessLister lister, IReadOnlyList<AgentSession> sessions, int selfPid)
         => Build(lister.List(), sessions, selfPid);
 
-    /// <summary>자동 선택: 종료 가능한 후보 중 최근 keep개를 빼고 모두. 모호한(unknown) codex 트리는 절대 포함하지 않는다</summary>
+    /// <summary>
+    /// 자동 선택: 세션과 이어진 종료 가능 후보 중 최근 keep개를 빼고 모두.
+    /// 세션 없는 트리(orphan·unknown)는 HUD 밖 도구(claude -p 스크립트, SDK 앱 등)일 수 있어 직접 체크할 때만 종료한다
+    /// </summary>
     public static IReadOnlyList<CleanupRow> SelectAllButLatest(IReadOnlyList<CleanupRow> rows, int keep, bool includeActive)
-        => rows.Where(x => x.CanTerminate && !x.Ambiguous && (includeActive || !x.IsActive))
+        => rows.Where(x => x.CanTerminate && x.Session is not null && (includeActive || !x.IsActive))
             .OrderByDescending(x => x.LastActivityAt).ThenByDescending(x => x.Pid)
             .Skip(Math.Max(0, keep)).ToArray();
 

@@ -164,7 +164,7 @@ Cleanup.NoCommandLines	WMI is unavailable, so command lines could not be read; C
 Cleanup.TreeTip	{0} processes in this tree: {1}	이 트리의 프로세스 {0}개: {1}
 Cleanup.Hint	Terminating kills the agent process and its children only - never VS Code, the HUD itself, or a process that belongs to two trees. Rows marked shared or unknown cannot be selected.	종료는 에이전트 프로세스와 그 자식만 끝냅니다. VS Code, HUD 자신, 두 트리에 동시에 속한 프로세스는 대상이 아닙니다. 공유·알 수 없음으로 표시된 줄은 선택할 수 없습니다.
 Cleanup.Guard.SelfProcess	Agent HUD itself	HUD 자신
-Cleanup.Guard.ProtectedProcess	shared process (VS Code etc.)	공용 프로세스(VS Code 등)
+Cleanup.Guard.ProtectedProcess	shared process (VS Code, desktop app etc.)	공용 프로세스(VS Code·데스크톱 앱 등)
 Cleanup.Guard.SharedProcess	process shared by two trees	두 트리가 공유
 Cleanup.Guard.SharedSession	shared by several conversations	여러 대화가 공유
 Cleanup.Guard.Ambiguous	unknown - select manually	알 수 없음 - 직접 선택
