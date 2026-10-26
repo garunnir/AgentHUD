@@ -292,7 +292,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex, new OpenCodeProvider(home, dataHome: Environment.GetEnvironmentVariable("XDG_DATA_HOME"))], _registry);
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
-        Closed += (_, _) => _desktopFollower?.Dispose();
+        Closed += (_, _) => { _desktopFollower?.Dispose(); SleepInhibitor.Set(false); };
         Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); StartUpdateTimer(); };
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
@@ -303,6 +303,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var all = _registry.GetAllAgents();
         _resumer.Check(all);
+        SleepInhibitor.Set(all.Any(x => x.DisplayState is AgentState.Working or AgentState.Thinking));
         PlayStateSounds(all);
         // 숨긴 세션은 초기화 전까지 숨기되, 새로 대기·완료 상태가 되면 다시 표시
         foreach (var (id, seen) in _dismissed.ToArray())
@@ -442,8 +443,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string FormatTokens(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.0}M" : n >= 1_000 ? $"{n / 1_000.0:0.0}K" : n.ToString();
     private static bool NeedsAttention(AgentState state) => state is AgentState.WaitingForInput or AgentState.WaitingForApproval or AgentState.Completed;
     private void Header_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) ToggleMinimized(); else DragMove(); }
+    // 숨기기(×)를 연타하면 아래 행이 올라와 두 번째 클릭이 그 행의 더블클릭으로 인식되므로, 직전 숨기기 직후의 더블클릭은 무시
+    private long _lastDismissTick = long.MinValue / 2;
     private void List_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (Environment.TickCount64 - _lastDismissTick < 600) return;
         if (ItemsControl.ContainerFromElement((ListBox)sender, (DependencyObject)e.OriginalSource) is ListBoxItem { DataContext: AgentSession session })
         {
             _registry.AcknowledgeCompletion(session.Id);
@@ -541,6 +545,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void Dismiss_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: AgentSession session }) return;
+        _lastDismissTick = Environment.TickCount64;
         // 완료 표시는 확인 처리해 숨긴 직후 다시 나타나지 않게 함
         _dismissed[session.Id] = session.HasUnreadCompletion ? AgentState.Idle : session.DisplayState;
         if (session.HasUnreadCompletion) _registry.AcknowledgeCompletion(session.Id);
