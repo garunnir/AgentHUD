@@ -107,6 +107,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _completeSoundEnabled = true, _askSoundEnabled = true;
     public bool CompleteSoundEnabled { get => _completeSoundEnabled; set => SetField(ref _completeSoundEnabled, value, nameof(CompleteSoundEnabled)); }
     public bool AskSoundEnabled { get => _askSoundEnabled; set => SetField(ref _askSoundEnabled, value, nameof(AskSoundEnabled)); }
+    // Discord 웹훅 알림. URL은 DPAPI 파일(DiscordWebhookStore)에만 두고 placement.json에는 쓰지 않는다
+    private readonly DiscordNotifier _discord = new();
+    public bool DiscordEnabled { get => _discord.Enabled; set { if (_discord.Enabled == value) return; _discord.Enabled = value; PropertyChanged?.Invoke(this, new(nameof(DiscordEnabled))); } }
+    public bool DiscordNotifyAsk { get => _discord.NotifyAsk; set { if (_discord.NotifyAsk == value) return; _discord.NotifyAsk = value; PropertyChanged?.Invoke(this, new(nameof(DiscordNotifyAsk))); } }
+    public bool DiscordNotifyComplete { get => _discord.NotifyComplete; set { if (_discord.NotifyComplete == value) return; _discord.NotifyComplete = value; PropertyChanged?.Invoke(this, new(nameof(DiscordNotifyComplete))); } }
+    private string _discordStatus = "";
+    public string DiscordStatus { get => _discordStatus; private set => SetField(ref _discordStatus, value, nameof(DiscordStatus)); }
+    public void SetDiscordWebhook(string? url)
+    {
+        url = url?.Trim();
+        if (!string.IsNullOrEmpty(url) && !DiscordNotifier.IsValidWebhookUrl(url)) { DiscordStatus = Loc.T("Discord.Invalid"); return; }
+        DiscordWebhookStore.Save(url);
+        _discord.WebhookUrl = string.IsNullOrEmpty(url) ? null : url;
+        DiscordStatus = Loc.T(_discord.WebhookUrl is null ? "Discord.NotSet" : "Discord.Saved");
+    }
+    public async Task TestDiscordAsync()
+    {
+        if (_discord.WebhookUrl is null) { DiscordStatus = Loc.T("Discord.NotSet"); return; }
+        DiscordStatus = Loc.T(await _discord.SendAsync(Loc.T("Discord.TestMessage")) ? "Discord.TestOk" : "Discord.TestFailed");
+    }
     private void SetField<T>(ref T field, T value, string name)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
@@ -119,6 +139,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void PlayStateSounds(IReadOnlyCollection<AgentSession> all)
     {
         bool complete = false, ask = false;
+        var events = new List<(AgentSession, AgentState)>();
         var seen = new HashSet<string>();
         foreach (var s in all)
         {
@@ -131,7 +152,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 || DateTime.UtcNow - s.LastActivityAt.ToUniversalTime() > TimeSpan.FromSeconds(60)) continue;
             if (state == AgentState.Completed) complete = true;
             else if (state is AgentState.WaitingForInput or AgentState.WaitingForApproval) ask = true;
+            else continue;
+            events.Add((s, state));
         }
+        if (events.Count > 0) _ = _discord.NotifyAsync(events);
         foreach (var id in _lastStates.Keys.Where(id => !seen.Contains(id)).ToArray()) _lastStates.Remove(id);
         _soundsPrimed = true;
         if (ask && AskSoundEnabled) SoundSetting.Play(AskSound, AskSoundFile);
@@ -140,6 +164,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly List<NotificationWindow> _notifications = [];
     private void ShowLimitReset(AgentSession session)
     {
+        _ = _discord.NotifyLimitResetAsync(session);
         var body = Loc.F("Notify.LimitResetBody", session.DisplayTitle, session.RateLimitResetAt!.Value.ToLocalTime())
             + " " + Loc.T(AutoResume ? "Notify.AutoResumeSoon" : "Notify.ClickToOpen");
         var w = new NotificationWindow(Loc.F("Notify.LimitResetTitle", session.DisplayName, session.ProjectName), body, () => { _registry.AcknowledgeCompletion(session.Id); OpenInVsCode(session); });
@@ -278,6 +303,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => { _desktopFollower?.Dispose(); SleepInhibitor.Set(false); };
+        _discord.WebhookUrl = DiscordWebhookStore.Load();
         Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); StartUpdateTimer(); };
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정
@@ -548,7 +574,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; DiscordEnabled = p.DiscordEnabled; DiscordNotifyAsk = p.DiscordNotifyAsk; DiscordNotifyComplete = p.DiscordNotifyComplete; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
     }
     // 기존 사용자 마이그레이션: placement.json에 선택 기록이 없으면(처음 실행 또는 이전 버전 업그레이드) statusLine을
     // 조용히 한 번 연동(기본값, 실패해도 다음 실행에서 재시도). sessionKey API는 이미 키+Org ID를 설정해 둔
@@ -561,9 +587,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck, DiscordEnabled = DiscordEnabled, DiscordNotifyAsk = DiscordNotifyAsk, DiscordNotifyComplete = DiscordNotifyComplete })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true, bool DiscordEnabled = false, bool DiscordNotifyAsk = true, bool DiscordNotifyComplete = true);
 }
 
 

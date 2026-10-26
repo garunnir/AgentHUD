@@ -27,6 +27,13 @@ public partial class SettingsWindow : Window
         if (DataContext is MainWindow main && !string.IsNullOrWhiteSpace(KeyBox.Password)) main.SetClaudeSessionKey(KeyBox.Password);
         KeyBox.Clear();
     }
+    private void DiscordSave_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindow main) return;
+        main.SetDiscordWebhook(DiscordBox.Password);
+        if (DiscordNotifier.IsValidWebhookUrl(DiscordBox.Password.Trim()) || string.IsNullOrWhiteSpace(DiscordBox.Password)) DiscordBox.Clear();
+    }
+    private async void DiscordTest_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) await main.TestDiscordAsync(); }
     private void OpenCodeLogin_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LoginOpenCode(this); }
     private async void OpenCodeRefresh_OnClick(object sender, RoutedEventArgs e)
     {

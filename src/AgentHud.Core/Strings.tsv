@@ -129,3 +129,20 @@ Go.LoginRequired	Log in again and check the workspace ID	다시 로그인하고 
 Go.HttpError	Go usage request failed (HTTP {0})	Go 사용량 조회 실패 (HTTP {0})
 Go.BadResponse	Go usage unavailable: no subscription or unsupported response	Go 사용량 없음: 구독 또는 응답 형식을 확인하세요
 Go.LogoutFailed	Could not remove the saved Console session	저장된 Console 세션을 삭제하지 못했습니다
+Discord.Completed	{0} · {1} — completed	{0} · {1} — 작업 완료
+Discord.WaitingInput	{0} · {1} — waiting for your input	{0} · {1} — 입력 대기 중
+Discord.WaitingApproval	{0} · {1} — waiting for approval	{0} · {1} — 승인 대기 중
+Discord.LimitReset	{0} · {1} — usage limit reset	{0} · {1} — 사용량 한도 해제
+Discord.TestMessage	Agent HUD test notification	Agent HUD 테스트 알림
+Discord.Saved	Webhook saved	웹훅을 저장했습니다
+Discord.Invalid	Not a valid Discord webhook URL	올바른 Discord 웹훅 URL이 아닙니다
+Discord.NotSet	No webhook set	웹훅이 설정되지 않았습니다
+Discord.TestOk	Test message sent	테스트 메시지를 보냈습니다
+Discord.TestFailed	Sending failed (check the URL and network)	전송에 실패했습니다 (URL과 네트워크를 확인하세요)
+Settings.Discord	Discord notifications	Discord 알림
+Settings.DiscordEnable	Send status changes to a Discord webhook	상태 변화를 Discord 웹훅으로 전송
+Settings.DiscordAsk	When waiting for input or approval	입력·승인 대기 시
+Settings.DiscordComplete	When a task completes	작업 완료 시
+Settings.DiscordWebhook	Webhook URL	웹훅 URL
+Settings.DiscordTest	Test	테스트
+Settings.DiscordHint	Create a webhook in Discord: channel settings → Integrations → Webhooks. Only the agent, project name and state are sent, never conversation content. The URL works like a password: it is encrypted so only the current user on this PC can read it. Usage-limit resets are sent too while 'Notify when a usage limit resets' is on.	Discord 채널 설정 → 연동 → 웹훅에서 만드세요. 에이전트·프로젝트명·상태만 전송하고 대화 내용은 보내지 않습니다. URL은 비밀번호와 같으므로 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장합니다. '사용량 한도가 풀리면 알림'이 켜져 있으면 한도 해제도 함께 보냅니다.

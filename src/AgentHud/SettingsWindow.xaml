@@ -88,6 +88,19 @@
             <CheckBox Margin="0,14,0,0" IsChecked="{Binding AutoResume, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.AutoResume}"/>
             <TextBox Margin="0,6,0,0" Text="{Binding ResumePrompt, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding AutoResume}" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="80" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12" ToolTip="{local:Tr Settings.ResumePromptTip}"/>
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.AutoResumeHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+            <CheckBox Margin="0,14,0,0" IsChecked="{Binding DiscordEnabled, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.DiscordEnable}"/>
+            <StackPanel IsEnabled="{Binding DiscordEnabled}">
+              <CheckBox Margin="20,6,0,0" IsChecked="{Binding DiscordNotifyAsk, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.DiscordAsk}"/>
+              <CheckBox Margin="20,6,0,0" IsChecked="{Binding DiscordNotifyComplete, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.DiscordComplete}"/>
+              <TextBlock Margin="0,6,0,0" Text="{local:Tr Settings.DiscordWebhook}" Foreground="#91A0B5" FontSize="11"/>
+              <DockPanel Margin="0,2,0,0">
+                <Button DockPanel.Dock="Right" Content="{local:Tr Settings.DiscordTest}" Click="DiscordTest_OnClick" Margin="4,0,0,0" Padding="8,2"/>
+                <Button DockPanel.Dock="Right" Content="{local:Tr Settings.Save}" Click="DiscordSave_OnClick" Margin="6,0,0,0" Padding="8,2"/>
+                <PasswordBox x:Name="DiscordBox" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
+              </DockPanel>
+              <TextBlock Margin="0,4,0,0" Text="{Binding DiscordStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
+              <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.DiscordHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
           </StackPanel>
         </TabItem>
         <TabItem Header="{local:Tr Settings.Tab.Claude}">

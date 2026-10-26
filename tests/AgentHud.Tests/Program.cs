@@ -810,8 +810,34 @@ Assert(UpdateChecker.Pick(releaseJson, new Version(0, 16, 0), "-win-x64.zip") is
 Assert(UpdateChecker.Pick(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true"), new Version(0, 14, 1), "-win-x64.zip") is null, "prerelease is skipped");
 Assert(UpdateChecker.Pick(releaseJson, new Version(0, 14, 1), "-macos-arm64.zip") is null, "missing asset is not an update");
 Assert(UpdateChecker.ParseTag("v1.2.0-beta") is null && UpdateChecker.ParseTag("v0.10.0") > UpdateChecker.ParseTag("v0.9.3"), "tag parsing compares numerically and skips pre-release tags");
+Assert(DiscordNotifier.IsValidWebhookUrl("https://discord.com/api/webhooks/123456789/abc-DEF_123") && DiscordNotifier.IsValidWebhookUrl("https://ptb.discord.com/api/webhooks/1/a")
+    && !DiscordNotifier.IsValidWebhookUrl("http://discord.com/api/webhooks/1/a") && !DiscordNotifier.IsValidWebhookUrl("https://evil.example/api/webhooks/1/a")
+    && !DiscordNotifier.IsValidWebhookUrl("https://discord.com.evil.example/api/webhooks/1/a") && !DiscordNotifier.IsValidWebhookUrl(null), "discord webhook url validation");
+var discordSession = new AgentSession { Id = "claude:d", AgentType = AgentType.ClaudeCode, ProjectPath = Path.Combine(Path.GetTempPath(), "my_proj*") };
+var discord = new DiscordNotifier { NotifyAsk = false };
+Assert(discord.BuildLine(discordSession, AgentState.WaitingForInput) is null && discord.BuildLine(discordSession, AgentState.Working) is null, "discord skips disabled and non-notifying states");
+Assert(discord.BuildLine(discordSession, AgentState.Completed) is { } doneLine && doneLine.Contains(@"my\_proj\*") && !doneLine.Contains(Path.GetTempPath()), "discord line has escaped project name only");
+var discordHandler = new CaptureHandler();
+var sender = new DiscordNotifier(new HttpClient(discordHandler)) { Enabled = true, WebhookUrl = "https://discord.com/api/webhooks/1/token" };
+Assert(await sender.NotifyAsync([(discordSession, AgentState.Completed), (discordSession with { Id = "claude:e" }, AgentState.WaitingForApproval)]) && discordHandler.Bodies.Count == 1, "discord batches events into one request");
+Assert(discordHandler.Bodies[0].Contains("allowed_mentions") && discordHandler.Bodies[0].Contains("\"parse\":[]"), "discord payload disables mentions");
+sender.Enabled = false;
+Assert(!await sender.NotifyAsync([(discordSession, AgentState.Completed)]) && discordHandler.Bodies.Count == 1, "discord sends nothing when disabled");
+discordHandler.Status = System.Net.HttpStatusCode.TooManyRequests; sender.Enabled = true;
+Assert(!await sender.SendAsync("x"), "discord rate limit reports failure without throwing");
 Console.WriteLine("All checks passed.");
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }
+
+sealed class CaptureHandler : HttpMessageHandler
+{
+    public List<string> Bodies { get; } = [];
+    public System.Net.HttpStatusCode Status { get; set; } = System.Net.HttpStatusCode.NoContent;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+        return new HttpResponseMessage(Status);
+    }
+}
 
 sealed class TestTimeProvider : TimeProvider
 {
