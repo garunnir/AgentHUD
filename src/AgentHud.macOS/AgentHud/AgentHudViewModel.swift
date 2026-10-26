@@ -48,6 +48,19 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var notifyVisibleOnly = true {
         didSet { UserDefaults.standard.set(notifyVisibleOnly, forKey: Self.notifyVisibleOnlyKey) }
     }
+    /// Discord webhook notifications (completed / waiting events, plus limit resets while
+    /// `notifyLimitReset` is on). The URL itself lives in the Keychain, not in UserDefaults.
+    @Published public var discordEnabled = false {
+        didSet { discord.enabled = discordEnabled; UserDefaults.standard.set(discordEnabled, forKey: Self.discordEnabledKey) }
+    }
+    @Published public var discordNotifyAsk = true {
+        didSet { discord.notifyAsk = discordNotifyAsk; UserDefaults.standard.set(discordNotifyAsk, forKey: Self.discordAskKey) }
+    }
+    @Published public var discordNotifyComplete = true {
+        didSet { discord.notifyComplete = discordNotifyComplete; UserDefaults.standard.set(discordNotifyComplete, forKey: Self.discordCompleteKey) }
+    }
+    @Published public private(set) var discordStatus = ""
+    public var hasDiscordWebhook: Bool { discord.webhookURL != nil }
     @Published public var completeSoundEnabled = true {
         didSet { UserDefaults.standard.set(completeSoundEnabled, forKey: Self.completeSoundEnabledKey) }
     }
@@ -138,6 +151,9 @@ public final class AgentHudViewModel: ObservableObject {
     private static let resumePromptKey = "hud.resumePrompt"
     private static let notifyLimitResetKey = "hud.notifyLimitReset"
     private static let notifyVisibleOnlyKey = "hud.notifyVisibleOnly"
+    private static let discordEnabledKey = "hud.discordEnabled"
+    private static let discordAskKey = "hud.discordNotifyAsk"
+    private static let discordCompleteKey = "hud.discordNotifyComplete"
     private static let completeSoundEnabledKey = "hud.completeSoundEnabled"
     private static let completeSoundKey = "hud.completeSound"
     private static let completeSoundFileKey = "hud.completeSoundFile"
@@ -152,6 +168,7 @@ public final class AgentHudViewModel: ObservableObject {
 
     private let resumer: AutoResumer
     private let limitNotifier = RateLimitNotifier()
+    private let discord = DiscordNotifier()
     private let notifications: LimitResetNotifications
     private let memoStore: MemoStore
     /// Display state per session at the previous scan; sounds play only on a change.
@@ -235,6 +252,13 @@ public final class AgentHudViewModel: ObservableObject {
         self.resumePrompt = defaults.string(forKey: Self.resumePromptKey) ?? ""
         self.notifyLimitReset = defaults.object(forKey: Self.notifyLimitResetKey) as? Bool ?? true
         self.notifyVisibleOnly = defaults.object(forKey: Self.notifyVisibleOnlyKey) as? Bool ?? true
+        self.discordEnabled = defaults.bool(forKey: Self.discordEnabledKey)
+        self.discordNotifyAsk = defaults.object(forKey: Self.discordAskKey) as? Bool ?? true
+        self.discordNotifyComplete = defaults.object(forKey: Self.discordCompleteKey) as? Bool ?? true
+        discord.enabled = discordEnabled
+        discord.notifyAsk = discordNotifyAsk
+        discord.notifyComplete = discordNotifyComplete
+        discord.webhookURL = DiscordWebhookStore.load()
         self.completeSoundEnabled = defaults.object(forKey: Self.completeSoundEnabledKey) as? Bool ?? true
         self.completeSound = defaults.string(forKey: Self.completeSoundKey) ?? "Glass"
         self.completeSoundFile = defaults.string(forKey: Self.completeSoundFileKey) ?? ""
@@ -279,6 +303,7 @@ public final class AgentHudViewModel: ObservableObject {
 
     private func playStateSounds(_ all: [AgentSession]) {
         var complete = false, ask = false
+        var events: [(AgentSession, AgentState)] = []
         let now = Date()
         for session in all {
             let state = session.displayState
@@ -289,6 +314,12 @@ public final class AgentHudViewModel: ObservableObject {
                 || now.timeIntervalSince(session.lastActivityAt) > 60 { continue }
             if state == .completed { complete = true }
             else if state == .waitingForInput || state == .waitingForApproval { ask = true }
+            else { continue }
+            events.append((session, state))
+        }
+        if !events.isEmpty {
+            let discord = self.discord
+            Task { await discord.notify(events) }
         }
         let seen = Set(all.map(\.id))
         lastStates = lastStates.filter { seen.contains($0.key) }
@@ -298,6 +329,8 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     private func showLimitReset(_ session: AgentSession) {
+        let discord = self.discord
+        Task { await discord.notifyLimitReset(session) }
         let loc = Localiz.current
         let time = session.rateLimitResetAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? ""
         let title = HudTheme.formatPattern(loc.string("Notify.LimitResetTitle"), [session.agentType.displayName, session.projectName])
@@ -311,6 +344,25 @@ public final class AgentHudViewModel: ObservableObject {
         guard let session = registry.findSession(id) else { return }
         acknowledgeCompletion(id)
         openProject(session)
+    }
+
+    /// Saves (or, when empty, deletes) the webhook URL; invalid URLs are rejected with a status message.
+    public func setDiscordWebhook(_ raw: String) {
+        let url = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !url.isEmpty && !DiscordNotifier.isValidWebhookURL(url) { discordStatus = Localiz.current.string("Discord.Invalid"); return }
+        guard DiscordWebhookStore.save(url) else { discordStatus = Localiz.current.string("Discord.TestFailed"); return }
+        discord.webhookURL = url.isEmpty ? nil : url
+        discordStatus = Localiz.current.string(url.isEmpty ? "Discord.NotSet" : "Discord.Saved")
+        objectWillChange.send()
+    }
+
+    public func testDiscord() {
+        guard discord.webhookURL != nil else { discordStatus = Localiz.current.string("Discord.NotSet"); return }
+        let discord = self.discord
+        Task {
+            let ok = await discord.send(Localiz.current.string("Discord.TestMessage"))
+            self.discordStatus = Localiz.current.string(ok ? "Discord.TestOk" : "Discord.TestFailed")
+        }
     }
 
     public func previewSound(ask: Bool) {

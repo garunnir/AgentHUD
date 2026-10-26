@@ -66,6 +66,46 @@ final class WindowsParityTests: XCTestCase {
         XCTAssertEqual(notifier.takeDue([again]).count, 1, "A new reset time is announced again")
     }
 
+    func testDiscordWebhookValidationAndPayload() async {
+        XCTAssertTrue(DiscordNotifier.isValidWebhookURL("https://discord.com/api/webhooks/123456789/abc-DEF_123"))
+        XCTAssertTrue(DiscordNotifier.isValidWebhookURL("https://ptb.discord.com/api/webhooks/1/a"))
+        XCTAssertFalse(DiscordNotifier.isValidWebhookURL("http://discord.com/api/webhooks/1/a"))
+        XCTAssertFalse(DiscordNotifier.isValidWebhookURL("https://evil.example/api/webhooks/1/a"))
+        XCTAssertFalse(DiscordNotifier.isValidWebhookURL("https://discord.com.evil.example/api/webhooks/1/a"))
+        XCTAssertFalse(DiscordNotifier.isValidWebhookURL(nil))
+
+        var bodies: [String] = []
+        var status = 204
+        let notifier = DiscordNotifier(localiz: Localiz(locale: Locale(identifier: "en"), language: "en")) { request in
+            bodies.append(String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "")
+            return status
+        }
+        notifier.enabled = true
+        notifier.webhookURL = "https://discord.com/api/webhooks/1/token"
+        let target = session("claude:d", project: "/tmp/my_proj*", reset: nil)
+
+        notifier.notifyAsk = false
+        XCTAssertNil(notifier.line(for: target, state: .waitingForInput), "Switched-off events are skipped")
+        XCTAssertNil(notifier.line(for: target, state: .working), "Only completed and waiting states notify")
+        let line = notifier.line(for: target, state: .completed)
+        XCTAssertEqual(line?.contains("my\\_proj\\*"), true, "Project name is markdown-escaped")
+        XCTAssertEqual(line?.contains("/tmp"), false, "Only the folder name is sent, not the path")
+
+        let sent = await notifier.notify([(target, .completed), (target, .completed)])
+        XCTAssertTrue(sent)
+        XCTAssertEqual(bodies.count, 1, "Events from one scan are one request")
+        XCTAssertTrue(bodies[0].contains("allowed_mentions") && bodies[0].contains("\"parse\":[]"), "Mentions are disabled")
+
+        notifier.enabled = false
+        let sentWhenDisabled = await notifier.notify([(target, .completed)])
+        XCTAssertFalse(sentWhenDisabled)
+        XCTAssertEqual(bodies.count, 1)
+        notifier.enabled = true
+        status = 429
+        let rateLimited = await notifier.send("x")
+        XCTAssertFalse(rateLimited, "A rate-limited send reports failure")
+    }
+
     func testMemoStorePersistsGlobalAndProjectMemos() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
