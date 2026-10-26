@@ -79,15 +79,6 @@
               <TextBlock Text="{Binding UpdateStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
             </DockPanel>
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.AutoUpdateHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
-            <DockPanel Margin="0,14,0,0">
-              <Button DockPanel.Dock="Right" Content="{local:Tr Settings.CleanupOpen}" Click="Cleanup_OnClick" Padding="6,0" FontSize="11"/>
-              <TextBlock Text="{local:Tr Settings.Cleanup}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
-            </DockPanel>
-            <DockPanel Margin="0,6,0,0">
-              <TextBox DockPanel.Dock="Right" Width="48" Text="{Binding CleanupKeepLatest, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalContentAlignment="Right" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
-              <TextBlock Text="{local:Tr Settings.CleanupKeep}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
-            </DockPanel>
-            <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.CleanupHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
           </StackPanel>
         </TabItem>
         <TabItem Header="{local:Tr Settings.Tab.Alerts}">

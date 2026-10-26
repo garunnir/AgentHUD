@@ -42,5 +42,4 @@ public partial class SettingsWindow : Window
         try { await main.CheckForUpdateAsync(true); } finally { button.IsEnabled = true; }
     }
     private void DeleteKey_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.SetClaudeSessionKey(null); }
-    private void Cleanup_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.ShowCleanup(); }
 }

@@ -15,8 +15,6 @@ src/AgentHud.Core/          net9.0 class library — no UI, all parsing/state lo
   Discovery/                IAgentProvider, ClaudeCodeProvider, CodexProvider,
                             AgentDiscoveryService, AgentSessionRegistry, RateLimitParser,
                             GitRoot, ProcessSnapshot, SessionFileReader
-  Cleanup/ProcessCleanup.cs ProcessRecord/IProcessLister + pure tree building, session matching,
-                            safety rules and keep-latest-N selection for the cleanup window
   AutoResumer.cs            runs `claude --resume` / `codex exec resume` after a limit resets
   UpdateChecker.cs          picks a newer GitHub release + matching zip asset (auto-update)
   RateLimitNotifier.cs      decides which sessions get a "limit reset" notification
@@ -25,9 +23,7 @@ src/AgentHud.Core/          net9.0 class library — no UI, all parsing/state lo
 src/AgentHud/               net9.0-windows WPF app (WinExe)
   MainWindow.xaml(.cs)      the HUD: session list, minimized dot bar, usage gauges, settings
                             persistence (Placement record), VS Code open (OpenInVsCode)
-  SettingsWindow, MemoWindow, NotificationWindow, CleanupWindow (.xaml/.cs)
-  WindowsProcessLister.cs   IProcessLister for Windows: WMI Win32_Process via late-bound COM,
-                            Toolhelp32 + System.Diagnostics fallback (no command lines then)
+  SettingsWindow, MemoWindow, NotificationWindow (.xaml/.cs)
   AppUpdater.cs             auto-update: download + SHA-256 + extract, apply-update.ps1 swaps files after exit
   ClaudeUsageApi.cs         claude.ai usage API polling (via WebViewFetcher, DPAPI-stored key)
   WebViewFetcher.cs         off-screen WebView2 used to get past Cloudflare
@@ -76,7 +72,6 @@ docs/                       vscode-session-open.md (VS Code URI investigation), 
 | Supporting a new agent | implement `IAgentProvider`, add a value to `AgentType`, register it in the `MainWindow` constructor |
 | Auto-update (release check, install) | `UpdateChecker.Pick` (Core), `AppUpdater`, `MainWindow.CheckForUpdateAsync`/`InstallUpdateAsync`; asset flavor comes from `-p:UpdateAsset=` in release.yml (dev builds have none → disabled) |
 | Virtual desktop pinning | `Windows/VirtualDesktopPin.cs`, `Windows/VirtualDesktopFollower.cs` |
-| Old session cleanup (trees, safety, kill) | `ProcessCleanup.Build`/`SelectAllButLatest`/`StillMatches` (Core, pure), `WindowsProcessLister`, `CleanupWindow` |
 
 Prefer searching by symbol name (`grep -rn "TrackCompletion" src`) over line numbers; files are compact and dense.
 
@@ -105,6 +100,6 @@ macOS: `./scripts/build_app.sh` (output `src/AgentHud.macOS/dist/AgentHud.app`).
 
 ## Runtime files
 
-`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `cleanup.log` (process-tree terminations), `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile), `update/` (downloaded release zip, staged files, `apply-update.ps1`, `update.log`).
+`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile), `update/` (downloaded release zip, staged files, `apply-update.ps1`, `update.log`).
 
 macOS: `~/Library/Application Support/AgentHud/` holds the equivalent `claude-statusline.sh` + `claude-limits.json` + `claude-statusline-inner.txt` (see `ClaudeLimitLink.swift`). No sessionKey API is ported to macOS.

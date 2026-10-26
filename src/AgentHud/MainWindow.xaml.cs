@@ -249,21 +249,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Close();
     }
     private void UpdateMenu_OnClick(object sender, RoutedEventArgs e) => _ = PendingUpdate is null ? CheckForUpdateAsync(true) : InstallUpdateAsync();
-    // 오래된 세션 정리 창에서 "최근 N개만 남기고 선택"에 쓰는 N
-    private int _cleanupKeepLatest = 3;
-    public int CleanupKeepLatest { get => _cleanupKeepLatest; set => SetField(ref _cleanupKeepLatest, Math.Clamp(value, 0, 99), nameof(CleanupKeepLatest)); }
-    private CleanupWindow? _cleanupWindow;
-    /// <summary>프로세스 트리 정리 창. 열려 있으면 앞으로 가져온다(설정 창에서 열어도 소유자는 HUD)</summary>
-    public void ShowCleanup()
-    {
-        if (_cleanupWindow is not null) { _cleanupWindow.Activate(); return; }
-        _cleanupWindow = new CleanupWindow(() => _registry.GetAllAgents(), CleanupKeepLatest, n => CleanupKeepLatest = n) { Owner = this };
-        _cleanupWindow.Left = Math.Max(SystemParameters.VirtualScreenLeft, Left + ActualWidth - _cleanupWindow.Width);
-        _cleanupWindow.Top = Math.Max(SystemParameters.VirtualScreenTop, Top + 28);
-        _cleanupWindow.Closed += (_, _) => { _cleanupWindow = null; SavePlacement(); };
-        _cleanupWindow.Show();
-    }
-    private void Cleanup_OnClick(object sender, RoutedEventArgs e) => ShowCleanup();
     private SettingsWindow? _settingsWindow;
     private void Settings_OnClick(object sender, RoutedEventArgs e)
     {
@@ -556,7 +541,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
         foreach (var w in _memoWindows.Values.ToArray()) w.Close();
-        _cleanupWindow?.Close();
         foreach (var w in _notifications.ToArray()) w.Close();
         SavePlacement();
         await _discovery.DisposeAsync();
@@ -564,7 +548,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; CleanupKeepLatest = p.CleanupKeepLatest; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
     }
     // 기존 사용자 마이그레이션: placement.json에 선택 기록이 없으면(처음 실행 또는 이전 버전 업그레이드) statusLine을
     // 조용히 한 번 연동(기본값, 실패해도 다음 실행에서 재시도). sessionKey API는 이미 키+Org ID를 설정해 둔
@@ -577,9 +561,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck, CleanupKeepLatest = CleanupKeepLatest })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true, int CleanupKeepLatest = 3);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true);
 }
 
 

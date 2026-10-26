@@ -79,7 +79,6 @@
           </MenuItem.Style>
         </MenuItem>
         <Separator/>
-        <MenuItem Header="{local:Tr Main.Cleanup}" Click="Cleanup_OnClick"/>
         <MenuItem Header="{Binding UpdateMenuText}" IsEnabled="{Binding UpdateSupported, Mode=OneWay}" Click="UpdateMenu_OnClick"/>
         <MenuItem Header="{local:Tr Main.Settings}" Click="Settings_OnClick"/>
       </ContextMenu>
