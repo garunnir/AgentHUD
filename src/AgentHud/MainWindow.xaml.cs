@@ -135,11 +135,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     // 세션별 직전 표시 상태. 상태가 바뀌는 순간에만 소리를 낸다
     private readonly Dictionary<string, AgentState> _lastStates = [];
+    private readonly TurnTimer _turns = new();
     private bool _soundsPrimed;
     private void PlayStateSounds(IReadOnlyCollection<AgentSession> all)
     {
         bool complete = false, ask = false;
-        var events = new List<(AgentSession, AgentState)>();
+        var events = new List<(AgentSession, AgentState, TimeSpan?)>();
         var seen = new HashSet<string>();
         foreach (var s in all)
         {
@@ -147,16 +148,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var state = s.DisplayState;
             var known = _lastStates.TryGetValue(s.Id, out var prev);
             _lastStates[s.Id] = state;
+            var elapsed = _turns.Observe(s.Id, state, _soundsPrimed);
             // 첫 스캔이나 오래된 세션이 뒤늦게 발견된 경우는 알리지 않음
-            if (!_soundsPrimed || (known && prev == state) || s.ParentSessionId is not null
-                || DateTime.UtcNow - s.LastActivityAt.ToUniversalTime() > TimeSpan.FromSeconds(60)) continue;
+            if (!_soundsPrimed || (known && prev == state)) continue;
+            if (state is not (AgentState.Completed or AgentState.WaitingForInput or AgentState.WaitingForApproval)) continue;
+            var age = DateTime.UtcNow - s.LastActivityAt.ToUniversalTime();
+            if (s.ParentSessionId is not null || age > TimeSpan.FromSeconds(60))
+            {
+                if (_discord.Enabled) _discord.Log($"skip {state} {s.DisplayName} / {s.ProjectName}: {(s.ParentSessionId is not null ? "subagent" : $"last activity {age.TotalSeconds:0}s ago")}");
+                continue;
+            }
             if (state == AgentState.Completed) complete = true;
-            else if (state is AgentState.WaitingForInput or AgentState.WaitingForApproval) ask = true;
-            else continue;
-            events.Add((s, state));
+            else ask = true;
+            events.Add((s, state, elapsed));
         }
         if (events.Count > 0) _ = _discord.NotifyAsync(events);
-        foreach (var id in _lastStates.Keys.Where(id => !seen.Contains(id)).ToArray()) _lastStates.Remove(id);
+        foreach (var id in _lastStates.Keys.Where(id => !seen.Contains(id)).ToArray()) { _lastStates.Remove(id); _turns.Forget(id); }
         _soundsPrimed = true;
         if (ask && AskSoundEnabled) SoundSetting.Play(AskSound, AskSoundFile);
         else if (complete && CompleteSoundEnabled) SoundSetting.Play(CompleteSound, CompleteSoundFile);
@@ -304,6 +311,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => { _desktopFollower?.Dispose(); SleepInhibitor.Set(false); };
         _discord.WebhookUrl = DiscordWebhookStore.Load();
+        _discord.LogDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud");
         Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); StartUpdateTimer(); };
         Closing += OnClosing;
         // 최소화 중 세션 수가 바뀌어 폭이 변해도 오른쪽 끝을 고정

@@ -819,12 +819,30 @@ Assert(discord.BuildLine(discordSession, AgentState.WaitingForInput) is null && 
 Assert(discord.BuildLine(discordSession, AgentState.Completed) is { } doneLine && doneLine.Contains(@"my\_proj\*") && !doneLine.Contains(Path.GetTempPath()), "discord line has escaped project name only");
 var discordHandler = new CaptureHandler();
 var sender = new DiscordNotifier(new HttpClient(discordHandler)) { Enabled = true, WebhookUrl = "https://discord.com/api/webhooks/1/token" };
-Assert(await sender.NotifyAsync([(discordSession, AgentState.Completed), (discordSession with { Id = "claude:e" }, AgentState.WaitingForApproval)]) && discordHandler.Bodies.Count == 1, "discord batches events into one request");
+Assert(await sender.NotifyAsync([(discordSession, AgentState.Completed, null), (discordSession with { Id = "claude:e" }, AgentState.WaitingForApproval, null)]) && discordHandler.Bodies.Count == 1, "discord batches events into one request");
 Assert(discordHandler.Bodies[0].Contains("allowed_mentions") && discordHandler.Bodies[0].Contains("\"parse\":[]"), "discord payload disables mentions");
 sender.Enabled = false;
-Assert(!await sender.NotifyAsync([(discordSession, AgentState.Completed)]) && discordHandler.Bodies.Count == 1, "discord sends nothing when disabled");
-discordHandler.Status = System.Net.HttpStatusCode.TooManyRequests; sender.Enabled = true;
+Assert(!await sender.NotifyAsync([(discordSession, AgentState.Completed, null)]) && discordHandler.Bodies.Count == 1, "discord sends nothing when disabled");
+var discordLogDir = Path.Combine(Path.GetTempPath(), "agenthud-discord-" + Guid.NewGuid().ToString("N"));
+discordHandler.Status = System.Net.HttpStatusCode.TooManyRequests; sender.Enabled = true; sender.LogDirectory = discordLogDir;
 Assert(!await sender.SendAsync("x"), "discord rate limit reports failure without throwing");
+Assert(File.ReadAllText(Path.Combine(discordLogDir, "discord.log")).Contains("FAILED 429"), "discord logs failed sends with status code");
+Directory.Delete(discordLogDir, true);
+Assert(discord.BuildLine(discordSession, AgentState.Completed, TimeSpan.FromSeconds(754)) is { } elapsedLine && elapsedLine.Contains(DiscordNotifier.FormatDuration(TimeSpan.FromSeconds(754)))
+    && discord.BuildLine(discordSession, AgentState.Completed) == discord.BuildLine(discordSession, AgentState.Completed, null), "discord completion line carries elapsed time when known");
+Assert(DiscordNotifier.FormatDuration(TimeSpan.FromSeconds(754)) == Loc.F("Duration.MinutesSeconds", 12, 34) && DiscordNotifier.FormatDuration(TimeSpan.FromMinutes(125)) == Loc.F("Usage.ResetHoursMinutes", 2, 5)
+    && DiscordNotifier.FormatDuration(TimeSpan.FromSeconds(9)) == Loc.F("Duration.Seconds", 9), "duration formats seconds, minutes and hours");
+var turnClock = new TestTimeProvider();
+var turns = new TurnTimer(turnClock);
+Assert(turns.Observe("a", AgentState.Working) is null, "turn start has no elapsed");
+turnClock.Now += TimeSpan.FromMinutes(3); turns.Observe("a", AgentState.WaitingForApproval);
+turnClock.Now += TimeSpan.FromMinutes(2); turns.Observe("a", AgentState.Working);
+Assert(turns.Observe("a", AgentState.Completed) == TimeSpan.FromMinutes(5) && turns.Observe("a", AgentState.Completed) is null, "turn timer spans approval waits and reports once on completion");
+turns.Observe("b", AgentState.Working, record: false);
+Assert(turns.Observe("b", AgentState.Completed) is null, "turn already running at startup has no elapsed");
+turns.Observe("c", AgentState.Working); turns.Observe("c", AgentState.RateLimited); turns.Observe("c", AgentState.Working);
+turnClock.Now += TimeSpan.FromMinutes(1);
+Assert(turns.Observe("c", AgentState.Completed) == TimeSpan.FromMinutes(1), "rest state restarts the turn timer");
 Console.WriteLine("All checks passed.");
 static void Assert(bool condition, string name) { if (!condition) throw new Exception($"Assertion failed: {name}"); }
 

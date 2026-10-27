@@ -139,6 +139,9 @@ Discord.Invalid	Not a valid Discord webhook URL	올바른 Discord 웹훅 URL이 
 Discord.NotSet	No webhook set	웹훅이 설정되지 않았습니다
 Discord.TestOk	Test message sent	테스트 메시지를 보냈습니다
 Discord.TestFailed	Sending failed (check the URL and network)	전송에 실패했습니다 (URL과 네트워크를 확인하세요)
+Discord.Elapsed	({0}, done at {1:HH:mm})	({0}, {1:HH:mm} 완료)
+Duration.MinutesSeconds	{0}m {1}s	{0}분 {1}초
+Duration.Seconds	{0}s	{0}초
 Settings.Discord	Discord notifications	Discord 알림
 Settings.DiscordEnable	Send status changes to a Discord webhook	상태 변화를 Discord 웹훅으로 전송
 Settings.DiscordAsk	When waiting for input or approval	입력·승인 대기 시
