@@ -723,6 +723,84 @@ foreach (var invalid in new[]
     catch (Exception e) when (e is FormatException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException) { rejected = true; }
     Assert(rejected, "Go rejects invalid or unsupported response instead of showing a false allowance");
 }
+
+// Cursor discovery uses an isolated SQLite fixture, never the user's Cursor database.
+var cursorAppData = Path.Combine(Path.GetTempPath(), "agenthud-cursor-" + Guid.NewGuid());
+try
+{
+    var cursorClock = new TestTimeProvider();
+    var cursorProvider = new CursorProvider(cursorAppData, cursorClock);
+    Assert((await cursorProvider.DiscoverAsync(CancellationToken.None)).Count == 0, "missing Cursor database is empty");
+    var cursorRoot = Path.Combine(cursorAppData, "Cursor", "User", "globalStorage");
+    Directory.CreateDirectory(cursorRoot);
+    using (var db = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        { DataSource = Path.Combine(cursorRoot, "state.vscdb"), Pooling = false }.ToString()))
+    {
+        await db.OpenAsync();
+        async Task Exec(string sql, params (string Name, object Value)[] args)
+        {
+            using var cmd = db.CreateCommand(); cmd.CommandText = sql;
+            foreach (var (name, value) in args) cmd.Parameters.AddWithValue(name, value);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var now = cursorClock.Now.ToUnixTimeMilliseconds();
+        var liveId = Guid.NewGuid().ToString();
+        var doneId = Guid.NewGuid().ToString();
+        var draftId = Guid.NewGuid().ToString();
+        string Head(string id, string name, bool draft = false) =>
+            $"{{\"composerId\":\"{id}\",\"name\":\"{name}\",\"isDraft\":{(draft ? "true" : "false")},\"workspaceIdentifier\":{{\"id\":\"ws\",\"uri\":{{\"fsPath\":\"C:\\\\repo\"}}}}}}";
+        string Data(string status) => $"{{\"status\":\"{status}\",\"generatingBubbleIds\":[],\"isContinuationInProgress\":false}}";
+        await Exec("PRAGMA journal_mode=WAL;");
+        await Exec("""
+            CREATE TABLE composerHeaders(composerId TEXT PRIMARY KEY, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, value TEXT);
+            CREATE TABLE cursorDiskKV(key TEXT PRIMARY KEY, value TEXT);
+            """);
+        await Exec("INSERT INTO composerHeaders VALUES ($id,'ws',$now,$now,0,0,$value)", ("$id", liveId), ("$now", now), ("$value", Head(liveId, "Live chat")));
+        await Exec("INSERT INTO composerHeaders VALUES ($id,'ws',$now,$now,0,0,$value)", ("$id", doneId), ("$now", now), ("$value", Head(doneId, "Done chat")));
+        await Exec("INSERT INTO composerHeaders VALUES ($id,'ws',$now,$now,0,0,$value)", ("$id", draftId), ("$now", now), ("$value", Head(draftId, "Draft", true)));
+        await Exec("INSERT INTO composerHeaders VALUES ('empty-state-draft','ws',$now,$now,0,0,'{}')", ("$now", now));
+        await Exec("INSERT INTO composerHeaders VALUES ('old','ws',$t,$t,0,0,$value)", ("$t", now - 7_200_000), ("$value", Head("old", "Old")));
+        await Exec("INSERT INTO cursorDiskKV VALUES ($key,$value)", ("$key", "composerData:" + liveId), ("$value", Data("generating")));
+        await Exec("INSERT INTO cursorDiskKV VALUES ($key,$value)", ("$key", "composerData:" + doneId), ("$value", Data("completed")));
+        var found = await cursorProvider.DiscoverAsync(CancellationToken.None);
+        Assert(found.Count == 2, "Cursor excludes drafts, empty-state and stale composers");
+        var live = found.Single(x => x.Id == "cursor:" + liveId);
+        Assert(live.AgentType == AgentType.Cursor && live.DisplayName == "Cursor" && live.State == AgentState.Working
+            && live.SessionTitle == "Live chat" && live.WorktreePath == @"C:\repo", "Cursor maps identity, title, project and generating state");
+        Assert(found.Single(x => x.Id == "cursor:" + doneId).State == AgentState.Completed, "Cursor completed status maps");
+        Assert(new AgentHud.AutoResumer(cursorAppData, cursorAppData).CreateStartInfo(live) is null, "Cursor never uses the Claude/Codex resume command");
+        using var genDoc = System.Text.Json.JsonDocument.Parse("""{"status":"none","generatingBubbleIds":["b1"],"hasBlockingPendingActions":false}""");
+        Assert(CursorProvider.MapState(genDoc.RootElement, cursorClock.Now.UtcDateTime) == AgentState.Working, "Cursor generatingBubbleIds is working");
+        using var blockDoc = System.Text.Json.JsonDocument.Parse("""{"status":"none","hasBlockingPendingActions":true}""");
+        Assert(CursorProvider.MapState(blockDoc.RootElement, cursorClock.Now.UtcDateTime) == AgentState.WaitingForApproval, "Cursor blocking actions wait for approval");
+        using var unfinishedDoc = System.Text.Json.JsonDocument.Parse($"{{\"status\":\"aborted\",\"unfinishedRunAt\":{cursorClock.Now.ToUnixTimeMilliseconds()}}}");
+        Assert(CursorProvider.MapState(unfinishedDoc.RootElement, cursorClock.Now.UtcDateTime) == AgentState.Working, "Cursor aborted+unfinishedRunAt stays working");
+        cursorClock.Now = cursorClock.Now.AddHours(2);
+        Assert((await cursorProvider.DiscoverAsync(CancellationToken.None)).Count == 0, "Cursor sessions age out using injected clock");
+    }
+}
+finally { if (Directory.Exists(cursorAppData)) Directory.Delete(cursorAppData, true); }
+
+// Cursor usage fixtures contain no real account data.
+{
+    var fetched = new DateTime(2026, 10, 16, 0, 0, 0, DateTimeKind.Utc);
+    var json = """{"billingCycleEnd":"1785957659000","planUsage":{"autoPercentUsed":3.9,"apiPercentUsed":2.6,"totalPercentUsed":3.7,"includedSpend":1288,"totalSpend":1288,"limit":2000}}""";
+    var usage = AgentHud.CursorUsage.Parse(json, fetched);
+    Assert(usage.Auto!.UsedPercent == 3.9 && usage.Api!.UsedPercent == 2.6 && usage.Plan!.UsedPercent == 64.4, "Cursor Plan is includedSpend/limit, not totalPercentUsed");
+    Assert(usage.Auto.ResetsAt == DateTimeOffset.FromUnixTimeMilliseconds(1785957659000).UtcDateTime && usage.FetchedAt == fetched, "Cursor reset is billingCycleEnd ms");
+    var spendOnly = AgentHud.CursorUsage.Parse("""{"billingCycleEnd":1785957659000,"planUsage":{"totalSpend":500,"limit":1000}}""", fetched);
+    Assert(spendOnly.Plan!.UsedPercent == 50 && spendOnly.Auto is null, "Cursor falls back to totalSpend/limit when includedSpend missing");
+    var noSpend = AgentHud.CursorUsage.Parse("""{"billingCycleEnd":1785957659000,"planUsage":{"autoPercentUsed":10,"apiPercentUsed":1,"totalPercentUsed":9}}""", fetched);
+    Assert(noSpend.Plan is null && noSpend.Auto!.UsedPercent == 10, "Cursor omits Plan when spend fields are absent");
+    foreach (var invalid in new[] { "{}", "{broken", """{"planUsage":{}}""" })
+    {
+        var rejected = false;
+        try { AgentHud.CursorUsage.Parse(invalid, fetched); }
+        catch (Exception e) when (e is FormatException or System.Text.Json.JsonException or KeyNotFoundException) { rejected = true; }
+        Assert(rejected, "Cursor rejects empty usage instead of inventing meters");
+    }
+}
+
 // Claude limit fixtures contain no real account data.
 {
     var now = new DateTime(2026, 10, 18, 12, 0, 0, DateTimeKind.Utc);

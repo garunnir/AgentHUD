@@ -39,6 +39,6 @@ public sealed record AgentSession
     public LimitWindow? SecondaryLimit { get; init; }
     public string StatusTip => RateLimitResetAt is { } reset && DisplayState == AgentState.RateLimited
         ? Loc.F("Session.RateLimitedReset", reset.ToLocalTime()) : DisplayState.ToString();
-    public string DisplayName => AgentType switch { AgentType.ClaudeCode => "Claude", AgentType.OpenCode => "OpenCode", _ => "Codex" };
+    public string DisplayName => AgentType switch { AgentType.ClaudeCode => "Claude", AgentType.OpenCode => "OpenCode", AgentType.Cursor => "Cursor", _ => "Codex" };
     public string ProjectName => string.IsNullOrWhiteSpace(ProjectPath) ? Loc.T("Session.UnknownProject") : Path.GetFileName(ProjectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 }

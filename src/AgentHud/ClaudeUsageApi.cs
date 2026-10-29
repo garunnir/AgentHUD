@@ -6,8 +6,8 @@ using AgentHud.Models;
 
 namespace AgentHud;
 
-// claude.ai 사용량 API(비공식)를 sessionKey 쿠키로 주기적으로 조회해 5시간·주간 사용률을 얻는다.
-// sessionKey는 Windows DPAPI(현재 사용자 전용)로 암호화해 파일에 저장하고, 로그·화면에는 남기지 않는다.
+// claude.ai 사용량 API(비공식). sessionKey(+org)는 Windows DPAPI로 암호화 저장하고, 로그·화면에는 남기지 않는다.
+// 설정은 Cursor/OpenCode와 같이 WebView 로그인으로 받고, 주기 조회는 화면 밖 WebView2로 Cloudflare를 통과한다.
 public sealed class ClaudeUsageApi : IDisposable
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
@@ -56,6 +56,8 @@ public sealed class ClaudeUsageApi : IDisposable
             _orgId = value;
             Interlocked.Increment(ref _credentialsVersion);
             _latest = default;
+            if (HasKey && TryReadCredentials() is { Key: { Length: > 0 } key })
+                TryWriteCredentials(key, _orgId);
             Updated?.Invoke();
             _ = RefreshAsync();
         }
@@ -64,14 +66,33 @@ public sealed class ClaudeUsageApi : IDisposable
     public ClaudeLimitSnapshot Snapshot => _latest.FiveHour is null && _latest.SevenDay is null
         ? ClaudeLimitSnapshot.None : new(ClaudeLimitSource.UsageApi, _latest.FiveHour, _latest.SevenDay, _latest.At);
 
+    public void SaveLogin(string sessionKey, string orgId)
+    {
+        sessionKey = Clean(sessionKey) ?? throw new InvalidOperationException("No sessionKey");
+        orgId = orgId.Trim();
+        if (!Guid.TryParse(orgId, out _)) throw new InvalidOperationException("Invalid org");
+        Interlocked.Increment(ref _credentialsVersion);
+        TryWriteCredentials(sessionKey, orgId);
+        _orgId = orgId;
+        _latest = default;
+        Updated?.Invoke();
+        _ = RefreshAsync();
+    }
+
+    public void ClearLogin()
+    {
+        Interlocked.Increment(ref _credentialsVersion);
+        try { File.Delete(_keyPath); } catch (IOException) { }
+        _orgId = null; _latest = default; SetStatus("Api.NotConfigured"); Updated?.Invoke();
+    }
+
+    // 구버전: 평문 sessionKey만 저장된 파일 / 수동 붙여넣기 호환
     public void SetKey(string? key)
     {
         key = Clean(key);
         Interlocked.Increment(ref _credentialsVersion);
         if (string.IsNullOrEmpty(key)) { try { File.Delete(_keyPath); } catch (IOException) { } _latest = default; SetStatus("Api.NotConfigured"); Updated?.Invoke(); return; }
-        Directory.CreateDirectory(Path.GetDirectoryName(_keyPath)!);
-        File.WriteAllBytes(_keyPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser));
-        // 새 키가 이전 키와 같은 계정이라는 보장이 없으므로 검증 전까지 이전 계정의 사용량을 숨긴다.
+        TryWriteCredentials(key, _orgId);
         _latest = default;
         Updated?.Invoke();
         _ = RefreshAsync();
@@ -102,11 +123,19 @@ public sealed class ClaudeUsageApi : IDisposable
         try
         {
             if (!Enabled) { if (IsCurrent()) { _latest = default; SetStatus("Api.Disabled"); } return; }
-            if (!HasKey || _orgId is null) { if (IsCurrent()) { _latest = default; SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); } return; }
-            if (!Guid.TryParse(_orgId, out var org)) { if (IsCurrent()) { _latest = default; SetStatus("Api.OrgIdInvalid"); } return; }
-            string key;
-            try { key = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(_keyPath), null, DataProtectionScope.CurrentUser)); }
-            catch (Exception e) when (e is CryptographicException or IOException) { if (IsCurrent()) { _latest = default; SetStatus("Api.KeyUnreadable"); } return; }
+            if (TryReadCredentials() is not { Key: { Length: > 0 } key } creds)
+            { if (IsCurrent()) { _latest = default; SetStatus("Api.NotConfigured"); } return; }
+            var orgId = _orgId ?? creds.OrgId;
+            if (orgId is null || !Guid.TryParse(orgId, out var org))
+            {
+                orgId = await ResolveOrgIdAsync(key, _stop.Token);
+                if (!IsCurrent()) return;
+                if (orgId is null || !Guid.TryParse(orgId, out org))
+                { _latest = default; SetStatus(HasKey ? "Api.OrgIdRequired" : "Api.NotConfigured"); return; }
+                _orgId = orgId;
+                TryWriteCredentials(key, orgId);
+            }
+            else _orgId ??= orgId;
             // Cloudflare 때문에 일반 HTTP 클라이언트로는 막혀서, 화면 밖 WebView2(Chromium)로 조회한다(UI 스레드 필요)
             var url = $"https://claude.ai/api/organizations/{org}/usage";
             var (code, body) = await Application.Current.Dispatcher.InvokeAsync(() => _web.GetAsync(url, key, _stop.Token)).Task.Unwrap();
@@ -140,6 +169,44 @@ public sealed class ClaudeUsageApi : IDisposable
             Updated?.Invoke();
             if (credentialsChanged && !_stop.IsCancellationRequested) _ = RefreshAsync();
         }
+    }
+
+    private async Task<string?> ResolveOrgIdAsync(string key, CancellationToken token)
+    {
+        var (code, body) = await Application.Current.Dispatcher.InvokeAsync(() => _web.GetAsync("https://claude.ai/api/organizations", key, token)).Task.Unwrap();
+        if (code != 200 || WebViewFetcher.LooksLikeChallenge(body)) return null;
+        using var json = JsonDocument.Parse(body);
+        if (json.RootElement.ValueKind != JsonValueKind.Array) return null;
+        foreach (var org in json.RootElement.EnumerateArray())
+            if (org.TryGetProperty("uuid", out var uuid) && uuid.ValueKind == JsonValueKind.String && Guid.TryParse(uuid.GetString(), out _))
+                return uuid.GetString();
+        return null;
+    }
+
+    private (string Key, string? OrgId)? TryReadCredentials()
+    {
+        try
+        {
+            var raw = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(_keyPath), null, DataProtectionScope.CurrentUser));
+            if (raw.Length > 0 && raw[0] == '{')
+            {
+                using var doc = JsonDocument.Parse(raw);
+                var key = doc.RootElement.TryGetProperty("sessionKey", out var sk) ? Clean(sk.GetString()) : null;
+                var org = doc.RootElement.TryGetProperty("orgId", out var oid) && oid.ValueKind == JsonValueKind.String ? oid.GetString() : null;
+                return string.IsNullOrEmpty(key) ? null : (key, string.IsNullOrWhiteSpace(org) ? null : org.Trim());
+            }
+            var legacy = Clean(raw);
+            return string.IsNullOrEmpty(legacy) ? null : (legacy, null);
+        }
+        catch (Exception e) when (e is CryptographicException or IOException or JsonException or UnauthorizedAccessException)
+        { return null; }
+    }
+
+    private void TryWriteCredentials(string sessionKey, string? orgId)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_keyPath)!);
+        var json = JsonSerializer.Serialize(new Dictionary<string, string?> { ["sessionKey"] = sessionKey, ["orgId"] = orgId });
+        File.WriteAllBytes(_keyPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(json), null, DataProtectionScope.CurrentUser));
     }
 
     // Cloudflare 챌린지인지와, JSON 오류면 error_code(없으면 message)만 돌려줌. 응답의 다른 내용은 쓰지 않음

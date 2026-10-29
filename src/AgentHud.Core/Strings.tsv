@@ -11,6 +11,8 @@ Main.InstallUpdate	Install {0}…	{0} 설치…
 Main.UpdateDotTip	{0} is available. Right-click to install.	{0} 업데이트가 있습니다. 우클릭해서 설치하세요.
 Main.Minimize	Minimize	최소화
 Main.Memo	Notepad	메모장
+Main.NotificationsOn	Notifications on (click to mute all)	알림 켜짐 (클릭하면 모든 알림 끔)
+Main.NotificationsOff	Notifications off (click to turn on)	알림 꺼짐 (클릭하면 켬)
 Main.ProjectMemo	Project memo...	프로젝트 메모...
 Main.Dismiss	Hide from HUD	HUD에서 숨기기
 Memo.ProjectHeader	Memo · {0}	메모 · {0}
@@ -51,7 +53,7 @@ Api.OrgIdRequired	Organization ID required	Organization ID 필요
 Api.OrgIdInvalid	Invalid Organization ID format	Organization ID 형식 오류
 Api.KeyUnreadable	Can't read the saved key. Enter it again	저장된 키를 읽을 수 없음. 다시 입력하세요
 Api.Blocked	Blocked by Cloudflare (the browser fallback failed too)	Cloudflare가 요청을 막음 (브라우저 방식으로도 통과하지 못함)
-Api.AuthFailed	Authentication failed (HTTP {0}{1}): check the sessionKey or Organization ID	인증 실패 (HTTP {0}{1}): sessionKey 또는 Organization ID를 확인하세요
+Api.AuthFailed	Authentication failed (HTTP {0}{1}): log in again	인증 실패 (HTTP {0}{1}): 다시 로그인해 주세요
 Api.ConnectFailed	Connection failed (network or WebView2 error)	연결 실패 (네트워크 또는 WebView2 오류)
 Api.RequestFailed	Request failed (HTTP {0}{1})	요청 실패 (HTTP {0}{1})
 Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못함
@@ -63,6 +65,7 @@ Settings.Tab.General	General	일반
 Settings.Tab.Alerts	Alerts	알림
 Settings.Tab.Claude	Claude	Claude
 Settings.Tab.OpenCode	OpenCode	OpenCode
+Settings.Tab.Cursor	Cursor	Cursor
 Settings.Language	Language	언어
 Settings.LanguageAuto	System ({0})	시스템 ({0})
 Settings.LanguageMissing	not translated, English	번역 없음, 영어
@@ -95,7 +98,14 @@ Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키
 Settings.Save	Save	저장
 Settings.DeleteKey	Delete key	키 삭제
-Settings.ClaudeApiHint	In claude.ai DevTools, copy the UUID from /api/organizations/{UUID}/... in the Network tab and sessionKey from Application → Cookies. The key is encrypted so only the current user on this PC can decrypt it, and it is used only to fetch usage every 5 minutes. Enter it again when it expires. Intended for VS Code extension users, since the status line above does not run there. Agent HUD uses whichever of the status line and this API has the fresher valid value.	claude.ai 개발자도구 → 네트워크의 /api/organizations/{UUID}/... 에서 UUID를, Application → Cookies에서 sessionKey를 복사하세요. 키는 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장하며 5분마다 사용량만 조회합니다. 만료되면 다시 넣어야 합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
+Settings.ClaudeApiHint	Log in on claude.ai, then click Save. The session is encrypted for this Windows user and used only to fetch usage every 5 minutes. Intended for VS Code extension users, since the status line above does not run there. Agent HUD uses whichever of the status line and this API has the fresher valid value.	claude.ai에 로그인한 뒤 저장을 누르세요. 세션은 Windows 현재 사용자용으로 암호화되며 5분마다 사용량만 조회합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
+Claude.Login	Login	로그인
+Claude.Refresh	Refresh	새로고침
+Claude.Logout	Logout	로그아웃
+Claude.LoginTitle	Sign in to Claude	Claude 로그인
+Claude.LoginHint	After signing in, click Save to store this session securely. Organization ID is detected automatically.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다. Organization ID는 자동으로 찾습니다.
+Claude.LoginRequired	Log in again on claude.ai	claude.ai에 다시 로그인해 주세요
+Claude.LogoutFailed	Could not remove the saved Claude session	저장된 Claude 세션을 삭제하지 못했습니다
 Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows only the total, no bar)	연동하지 않을 때 Claude 사용량 예산 (백만 토큰, 0이면 막대 없이 합계만)
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간
@@ -129,6 +139,21 @@ Go.LoginRequired	Log in again and check the workspace ID	다시 로그인하고 
 Go.HttpError	Go usage request failed (HTTP {0})	Go 사용량 조회 실패 (HTTP {0})
 Go.BadResponse	Go usage unavailable: no subscription or unsupported response	Go 사용량 없음: 구독 또는 응답 형식을 확인하세요
 Go.LogoutFailed	Could not remove the saved Console session	저장된 Console 세션을 삭제하지 못했습니다
+Usage.Auto	Auto	Auto
+Usage.Api	API	API
+Usage.Plan	Plan	플랜
+Cursor.Title	Cursor usage (dashboard, unofficial)	Cursor 사용량 (대시보드, 비공식)
+Cursor.Login	Login	로그인
+Cursor.Refresh	Refresh	새로고침
+Cursor.Logout	Logout	로그아웃
+Cursor.LoginTitle	Sign in to Cursor	Cursor 로그인
+Cursor.LoginHint	After signing in, click Save to store this session securely.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다.
+Cursor.Hint	Log in on cursor.com, then click Save. The session cookie is encrypted for this Windows user; usage refreshes every 5 minutes. Auto and API are model-pool percents; Plan is included spend vs the plan limit.	cursor.com에 로그인한 뒤 저장을 누르세요. 세션 쿠키는 Windows 현재 사용자용으로 암호화하며 5분마다 조회합니다. Auto·API는 모델 풀 비율이고, Plan은 포함 사용량(한도 대비)입니다.
+Cursor.NotConfigured	Cursor login not configured	Cursor 로그인 미설정
+Cursor.LoginRequired	Log in again on cursor.com	cursor.com에 다시 로그인해 주세요
+Cursor.HttpError	Cursor usage request failed (HTTP {0})	Cursor 사용량 조회 실패 (HTTP {0})
+Cursor.BadResponse	Cursor usage unavailable: unsupported response	Cursor 사용량 없음: 응답 형식을 확인하세요
+Cursor.LogoutFailed	Could not remove the saved Cursor session	저장된 Cursor 세션을 삭제하지 못했습니다
 Discord.Completed	{0} · {1} — completed	{0} · {1} — 작업 완료
 Discord.WaitingInput	{0} · {1} — waiting for your input	{0} · {1} — 입력 대기 중
 Discord.WaitingApproval	{0} · {1} — waiting for approval	{0} · {1} — 승인 대기 중

@@ -111,17 +111,12 @@
             <CheckBox Margin="0,4,0,0" IsChecked="{Binding ClaudeApiEnabled, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.ClaudeApiEnable}"/>
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.ClaudeApiWarn}" Foreground="#D9A24A" FontSize="11" TextWrapping="Wrap"/>
             <StackPanel IsEnabled="{Binding ClaudeApiEnabled}">
-              <TextBlock Margin="0,6,0,0" Text="{local:Tr Settings.OrgId}" Foreground="#91A0B5" FontSize="11"/>
-              <TextBox Margin="0,2,0,0" Text="{Binding ClaudeOrgId, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
-              <TextBlock Margin="0,6,0,0" Text="{local:Tr Settings.SessionKey}" Foreground="#91A0B5" FontSize="11"/>
-              <DockPanel Margin="0,2,0,0">
-                <Button DockPanel.Dock="Right" Content="{local:Tr Settings.Save}" Click="SaveKey_OnClick" Margin="6,0,0,0" Padding="8,2"/>
-                <PasswordBox x:Name="KeyBox" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
-              </DockPanel>
-              <DockPanel Margin="0,4,0,0">
-                <Button DockPanel.Dock="Right" Content="{local:Tr Settings.DeleteKey}" Click="DeleteKey_OnClick" Padding="6,0" FontSize="11"/>
-                <TextBlock Text="{Binding ClaudeApiStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
-              </DockPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <Button Content="{local:Tr Claude.Login}" Click="ClaudeLogin_OnClick" Padding="6,2"/>
+                <Button Content="{local:Tr Claude.Refresh}" Click="ClaudeRefresh_OnClick" Padding="6,2" Margin="6,0,0,0"/>
+                <Button Content="{local:Tr Claude.Logout}" Click="ClaudeLogout_OnClick" Padding="6,2" Margin="6,0,0,0"/>
+              </StackPanel>
+              <TextBlock Margin="0,4,0,0" Text="{Binding ClaudeApiStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
               <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.ClaudeApiHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
             <TextBlock Margin="0,14,0,0" Text="{local:Tr Settings.Budget}" Foreground="#DCE3ED" FontSize="12"/>
@@ -148,6 +143,18 @@
             </StackPanel>
             <TextBlock Margin="0,4,0,0" Text="{Binding OpenCodeGoStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Go.Hint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+          </StackPanel>
+        </TabItem>
+        <TabItem Header="{local:Tr Settings.Tab.Cursor}">
+          <StackPanel>
+            <TextBlock Text="{local:Tr Cursor.Title}" Foreground="#DCE3ED" FontSize="12" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+              <Button Content="{local:Tr Cursor.Login}" Click="CursorLogin_OnClick" Padding="6,2"/>
+              <Button Content="{local:Tr Cursor.Refresh}" Click="CursorRefresh_OnClick" Padding="6,2" Margin="6,0,0,0"/>
+              <Button Content="{local:Tr Cursor.Logout}" Click="CursorLogout_OnClick" Padding="6,2" Margin="6,0,0,0"/>
+            </StackPanel>
+            <TextBlock Margin="0,4,0,0" Text="{Binding CursorUsageStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
+            <TextBlock Margin="0,4,0,0" Text="{local:Tr Cursor.Hint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
           </StackPanel>
         </TabItem>
       </TabControl>

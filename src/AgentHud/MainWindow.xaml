@@ -65,6 +65,10 @@
                         <DataTrigger Binding="{Binding AgentType}" Value="{x:Static m:AgentType.OpenCode}">
                           <Setter Property="Data" Value="F1 M0,0 H24 V28 H0 Z M5,5 V23 H19 V5 Z M5,0 H19 V9 H5 Z"/>
                         </DataTrigger>
+                        <DataTrigger Binding="{Binding AgentType}" Value="{x:Static m:AgentType.Cursor}">
+                          <Setter Property="Fill" Value="White"/>
+                          <Setter Property="Data" Value="F1 M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"/>
+                        </DataTrigger>
                       </Style.Triggers>
                     </Style>
   </Window.Resources>
@@ -92,6 +96,7 @@
         <TextBlock Text="AGENTS" Foreground="#91A0B5" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"/>
         <Button DockPanel.Dock="Right" Content="×" Click="Close_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Common.Close}"/>
         <Button DockPanel.Dock="Right" Content="–" Click="Minimize_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Minimize}"/>
+        <Button DockPanel.Dock="Right" Content="{Binding BellGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Bell_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{Binding BellToolTip}"/>
         <Button DockPanel.Dock="Right" Content="&#xE70B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Memo_OnClick" Foreground="#91A0B5" Background="Transparent" BorderThickness="0" Padding="8,0" ToolTip="{local:Tr Main.Memo}"/>
         <TextBlock Text="{Binding ActiveCount}" Foreground="White" FontWeight="Bold" Margin="8,0,0,0"/>
         <!-- 새 버전이 있으면 작은 점만 표시. 설치는 우클릭 메뉴에서 -->

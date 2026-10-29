@@ -1,3 +1,3 @@
 namespace AgentHud.Models;
 
-public enum AgentType { ClaudeCode, Codex, OpenCode }
+public enum AgentType { ClaudeCode, Codex, OpenCode, Cursor }

@@ -22,11 +22,14 @@ public partial class SettingsWindow : Window
         if (slot == "Complete") SoundSetting.Play(main.CompleteSound, main.CompleteSoundFile);
         else SoundSetting.Play(main.AskSound, main.AskSoundFile);
     }
-    private void SaveKey_OnClick(object sender, RoutedEventArgs e)
+    private void ClaudeLogin_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LoginClaude(this); }
+    private async void ClaudeRefresh_OnClick(object sender, RoutedEventArgs e)
     {
-        if (DataContext is MainWindow main && !string.IsNullOrWhiteSpace(KeyBox.Password)) main.SetClaudeSessionKey(KeyBox.Password);
-        KeyBox.Clear();
+        if (DataContext is not MainWindow main || sender is not System.Windows.Controls.Button button) return;
+        button.IsEnabled = false;
+        try { await main.RefreshClaudeAsync(); } finally { button.IsEnabled = true; }
     }
+    private void ClaudeLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutClaude(); }
     private void DiscordSave_OnClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainWindow main) return;
@@ -42,11 +45,18 @@ public partial class SettingsWindow : Window
         try { await main.RefreshOpenCodeAsync(); } finally { button.IsEnabled = true; }
     }
     private void OpenCodeLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutOpenCode(); }
+    private void CursorLogin_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LoginCursor(this); }
+    private async void CursorRefresh_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindow main || sender is not System.Windows.Controls.Button button) return;
+        button.IsEnabled = false;
+        try { await main.RefreshCursorAsync(); } finally { button.IsEnabled = true; }
+    }
+    private void CursorLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutCursor(); }
     private async void CheckUpdate_OnClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainWindow main || sender is not System.Windows.Controls.Button button) return;
         button.IsEnabled = false;
         try { await main.CheckForUpdateAsync(true); } finally { button.IsEnabled = true; }
     }
-    private void DeleteKey_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.SetClaudeSessionKey(null); }
 }
