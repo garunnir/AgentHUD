@@ -474,13 +474,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             rows.Add(CodexRow(AgentType.OpenCode, UsageRow.Month, go.Month, now) with { PacePercent = null });
         }
         else if (!string.IsNullOrEmpty(OpenCodeWorkspaceId)) rows.Add(new(AgentType.OpenCode, "Go", null, OpenCodeGoStatus));
-        if (_cursorUsage.Latest is { } cursor)
+        // Claude/Codex와 같이 활성 Cursor 세션이 있을 때만 게이지를 보여 준다(로그인만 된 상태에서는 숨김).
+        if (all.Any(x => x.AgentType == AgentType.Cursor))
         {
-            if (cursor.Auto is { } auto) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Auto, auto, now) with { PacePercent = null });
-            if (cursor.Api is { } api) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Api, api, now) with { PacePercent = null });
-            if (cursor.Plan is { } plan) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Plan, plan, now) with { PacePercent = null });
+            if (_cursorUsage.Latest is { } cursor)
+            {
+                if (cursor.Auto is { } auto) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Auto, auto, now) with { PacePercent = null });
+                if (cursor.Api is { } api) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Api, api, now) with { PacePercent = null });
+                if (cursor.Plan is { } plan) rows.Add(CodexRow(AgentType.Cursor, UsageRow.Plan, plan, now) with { PacePercent = null });
+            }
+            else if (_cursorUsage.HasCookies) rows.Add(new(AgentType.Cursor, "Cursor", null, CursorUsageStatus));
         }
-        else if (_cursorUsage.HasCookies) rows.Add(new(AgentType.Cursor, "Cursor", null, CursorUsageStatus));
         if (!ShowPaceMarker) for (var i = 0; i < rows.Count; i++) rows[i] = rows[i] with { PacePercent = null };
         for (var i = 0; i < rows.Count; i++)
         {
