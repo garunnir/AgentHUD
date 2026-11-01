@@ -35,7 +35,7 @@ jobs:
           Compress-Archive publish/fd/* "AgentHud-${{ github.ref_name }}-win-x64.zip"
           Compress-Archive publish/sc/* "AgentHud-${{ github.ref_name }}-win-x64-self-contained.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: AgentHud-${{ github.ref_name }}-win-*.zip
@@ -78,7 +78,7 @@ jobs:
             src/AgentHud.macOS/dist/AgentHud.app \
             "AgentHud-${{ github.ref_name }}-macos-${{ matrix.arch }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos-${{ matrix.arch }}
           path: AgentHud-${{ github.ref_name }}-macos-${{ matrix.arch }}.zip
