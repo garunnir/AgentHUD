@@ -6,70 +6,73 @@ namespace AgentHud.Discovery;
 
 public sealed class ClaudeCodeProvider : IAgentProvider
 {
-    private readonly string _sessionsRoot;
-    private readonly string _projectsRoot;
+    private readonly string _home;
     private readonly Dictionary<string, (long Length, DateTime Modified, TranscriptInfo Info)> _transcripts = [];
     private static readonly JsonSerializerOptions MetadataOptions = new() { PropertyNameCaseInsensitive = true };
     public AgentType AgentType => AgentType.ClaudeCode;
-    public IEnumerable<string> WatchRoots => [_sessionsRoot, _projectsRoot];
+    // Start() 시점에 존재하는 루트만 감시. 새 CLAUDE_CONFIG_DIR는 3초 주기 Discover가 잡는다.
+    public IEnumerable<string> WatchRoots => ClaudeConfigRoot.Discover(_home).SelectMany(x => x.WatchRoots);
 
-    public ClaudeCodeProvider(string home)
-    {
-        _sessionsRoot = Path.Combine(home, ".claude", "sessions");
-        _projectsRoot = Path.Combine(home, ".claude", "projects");
-    }
+    public ClaudeCodeProvider(string home) => _home = home;
 
     public async Task<IReadOnlyList<AgentSession>> DiscoverAsync(CancellationToken token)
     {
-        if (!Directory.Exists(_sessionsRoot)) return [];
         var processes = ProcessSnapshot.Capture();
         var result = new List<AgentSession>();
-        foreach (var file in Directory.EnumerateFiles(_sessionsRoot, "*.json", SearchOption.TopDirectoryOnly))
+        foreach (var root in ClaudeConfigRoot.Discover(_home))
         {
             token.ThrowIfCancellationRequested();
-            try
+            if (!Directory.Exists(root.SessionsRoot)) continue;
+            var identity = root.Identity;
+            foreach (var file in Directory.EnumerateFiles(root.SessionsRoot, "*.json", SearchOption.TopDirectoryOnly))
             {
-                await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
-                var data = await JsonSerializer.DeserializeAsync<ClaudeMetadata>(stream, MetadataOptions, token);
-                if (data?.SessionId is null || data.Pid <= 0) continue;
-                var alive = processes.Contains(data.Pid);
-                var activity = ParseDate(data.UpdatedAt) ?? File.GetLastWriteTimeUtc(file);
-                var state = !alive ? AgentState.Stopped : MapState(data.Status, activity);
-                // VS Code can keep an unused conversation process ready before any messages exist.
-                if (data.Entrypoint == "claude-vscode" && state == AgentState.Idle
-                    && Guid.TryParse(data.SessionId, out _) && !HasTranscript(data.SessionId)) continue;
-                var transcript = await ReadTranscriptAsync(data.SessionId, token);
-                if (alive && transcript.HasPendingQuestion
-                    && state is not (AgentState.Error or AgentState.Stopped or AgentState.WaitingForApproval))
-                    state = AgentState.WaitingForInput;
-                var wakeupAt = alive ? transcript.WakeupAt : null;
-                var hasBackground = alive && transcript.BackgroundSince > DateTime.UtcNow - BackgroundWindow;
-                // Status can read idle while work is still coming (open turn, background task, scheduled wakeup); that is progress, not a completion.
-                if (state == AgentState.Idle && (transcript.MidTurn || hasBackground || wakeupAt > DateTime.UtcNow)) state = AgentState.Working;
-                if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForInput or AgentState.WaitingForApproval))
-                    state = AgentState.RateLimited;
-                result.Add(new AgentSession
+                token.ThrowIfCancellationRequested();
+                try
                 {
-                    Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
-                    ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
-                    StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
-                    State = state, IsActive = alive, WakeupAt = wakeupAt,
-                    HasBackgroundTasks = hasBackground, RateLimitResetAt = transcript.RateLimitResetAt,
-                    Tokens5h = transcript.Usage?.Where(x => DateTime.UtcNow - x.At <= ShortWindow).Sum(x => x.Tokens) ?? 0,
-                    TokensWeek = transcript.Usage?.Sum(x => x.Tokens) ?? 0
-                });
+                    await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
+                    var data = await JsonSerializer.DeserializeAsync<ClaudeMetadata>(stream, MetadataOptions, token);
+                    if (data?.SessionId is null || data.Pid <= 0) continue;
+                    var alive = processes.Contains(data.Pid);
+                    var activity = ParseDate(data.UpdatedAt) ?? File.GetLastWriteTimeUtc(file);
+                    var state = !alive ? AgentState.Stopped : MapState(data.Status, activity);
+                    // VS Code can keep an unused conversation process ready before any messages exist.
+                    if (data.Entrypoint == "claude-vscode" && state == AgentState.Idle
+                        && Guid.TryParse(data.SessionId, out _) && !HasTranscript(root.ProjectsRoot, data.SessionId)) continue;
+                    var transcript = await ReadTranscriptAsync(root.ProjectsRoot, data.SessionId, token);
+                    if (alive && transcript.HasPendingQuestion
+                        && state is not (AgentState.Error or AgentState.Stopped or AgentState.WaitingForApproval))
+                        state = AgentState.WaitingForInput;
+                    var wakeupAt = alive ? transcript.WakeupAt : null;
+                    var hasBackground = alive && transcript.BackgroundSince > DateTime.UtcNow - BackgroundWindow;
+                    // Status can read idle while work is still coming (open turn, background task, scheduled wakeup); that is progress, not a completion.
+                    if (state == AgentState.Idle && (transcript.MidTurn || hasBackground || wakeupAt > DateTime.UtcNow)) state = AgentState.Working;
+                    if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForInput or AgentState.WaitingForApproval))
+                        state = AgentState.RateLimited;
+                    result.Add(new AgentSession
+                    {
+                        Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
+                        ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
+                        StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
+                        State = state, IsActive = alive, WakeupAt = wakeupAt,
+                        HasBackgroundTasks = hasBackground, RateLimitResetAt = transcript.RateLimitResetAt,
+                        Tokens5h = transcript.Usage?.Where(x => DateTime.UtcNow - x.At <= ShortWindow).Sum(x => x.Tokens) ?? 0,
+                        TokensWeek = transcript.Usage?.Sum(x => x.Tokens) ?? 0,
+                        AccountOrgId = identity.OrganizationUuid, AccountEmail = identity.Email,
+                        ClaudeConfigDir = root.ConfigDir
+                    });
+                }
+                catch (JsonException) { }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
-            catch (JsonException) { }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
         }
         return result;
     }
 
-    private bool HasTranscript(string sessionId)
+    private static bool HasTranscript(string projectsRoot, string sessionId)
     {
-        if (!Directory.Exists(_projectsRoot)) return false;
-        return Directory.EnumerateDirectories(_projectsRoot)
+        if (!Directory.Exists(projectsRoot)) return false;
+        return Directory.EnumerateDirectories(projectsRoot)
             .Any(project => File.Exists(Path.Combine(project, sessionId + ".jsonl")));
     }
 
@@ -95,13 +98,13 @@ public sealed class ClaudeCodeProvider : IAgentProvider
         }
         catch (JsonException) { }
     }
-    private async Task<TranscriptInfo> ReadTranscriptAsync(string sessionId, CancellationToken token)
+    private async Task<TranscriptInfo> ReadTranscriptAsync(string projectsRoot, string sessionId, CancellationToken token)
     {
         // Session IDs are filenames, never paths supplied by metadata.
-        if (!Guid.TryParse(sessionId, out _) || !Directory.Exists(_projectsRoot)) return new();
+        if (!Guid.TryParse(sessionId, out _) || !Directory.Exists(projectsRoot)) return new();
         try
         {
-            foreach (var project in Directory.EnumerateDirectories(_projectsRoot))
+            foreach (var project in Directory.EnumerateDirectories(projectsRoot))
             {
                 var path = Path.Combine(project, sessionId + ".jsonl");
                 var info = new FileInfo(path);

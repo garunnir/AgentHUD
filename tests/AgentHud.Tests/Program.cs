@@ -555,6 +555,52 @@ promptResumer.Prompt = "사용량 한도로 중단됐던 작업을 이어서 진
 Assert(promptResumer.CustomPrompt is null && promptResumer.Prompt == AgentHud.AutoResumer.DefaultPrompt, "a saved default prompt in any language follows the current language");
 promptResumer.Prompt = "keep going";
 Assert(promptResumer.CustomPrompt == "keep going", "a custom resume prompt is kept");
+// Remote Control: 매직패킷 판별, 대상 세션, 명령줄
+{
+    byte[] mac = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB];
+    byte[] Packet(byte[] target, byte[]? tail = null, int prefix = 0) =>
+        [.. new byte[prefix], .. Enumerable.Repeat((byte)0xFF, 6), .. Enumerable.Range(0, 16).SelectMany(_ => target), .. tail ?? []];
+    Assert(AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac), [mac]), "magic packet for this MAC is detected");
+    Assert(AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac, prefix: 14), [[9, 9, 9, 9, 9, 9], mac]), "magic packet may follow a header and match any local MAC");
+    Assert(!AgentHud.MagicPacketListener.IsMagicPacket(Packet([1, 2, 3, 4, 5, 6]), [mac]) && !AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac)[..^1], [mac]),
+        "magic packet for another MAC or truncated is ignored");
+    Assert(AgentHud.MagicPacketListener.TryParsePassword("aa-bb:cc dd", out var pw4) && pw4!.SequenceEqual(new byte[] { 0xAA, 0xBB, 0xCC, 0xDD })
+        && AgentHud.MagicPacketListener.TryParsePassword(" ", out var noPw) && noPw is null
+        && !AgentHud.MagicPacketListener.TryParsePassword("12-34-5", out _) && !AgentHud.MagicPacketListener.TryParsePassword("zz-zz-zz-zz", out _),
+        "SecureOn password parses 4/6 hex bytes, empty means none");
+    Assert(AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac, pw4), [mac], pw4) && !AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac), [mac], pw4)
+        && !AgentHud.MagicPacketListener.IsMagicPacket(Packet(mac, [0xAA, 0xBB, 0xCC, 0x00]), [mac], pw4), "SecureOn password must match when set");
+
+    var rcHome = Path.Combine(Path.GetTempPath(), "agenthud-rc-" + Guid.NewGuid());
+    try
+    {
+        var fakeClaude = Path.Combine(rcHome, ".vscode", "extensions", "anthropic.claude-code-1.0.0", "resources", "native-binary", "claude.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(fakeClaude)!);
+        await File.WriteAllTextAsync(fakeClaude, "");
+        var rcClock = new TestTimeProvider();
+        var rc = new AgentHud.RemoteControlLauncher(rcHome, rcHome, rcClock);
+        var latestId = Guid.NewGuid();
+        var latest = new AgentSession { Id = $"claude:{latestId}", AgentType = AgentType.ClaudeCode, ProjectPath = rcHome, LastActivityAt = DateTime.UtcNow };
+        var picked = AgentHud.RemoteControlLauncher.PickTarget([
+            latest with { Id = $"claude:{Guid.NewGuid()}", LastActivityAt = DateTime.UtcNow.AddHours(-1) }, latest,
+            latest with { Id = $"codex:{Guid.NewGuid()}", AgentType = AgentType.Codex, LastActivityAt = DateTime.UtcNow.AddHours(1) },
+            latest with { Id = $"claude:{Guid.NewGuid()}", ParentSessionId = latest.Id, LastActivityAt = DateTime.UtcNow.AddHours(1) },
+            latest with { Id = $"claude:{Guid.NewGuid()}", ProjectPath = Path.Combine(rcHome, "missing"), LastActivityAt = DateTime.UtcNow.AddHours(1) }]);
+        Assert(picked?.Id == latest.Id, "remote control targets the latest top-level Claude session in an existing folder");
+        var continueInfo = rc.CreateStartInfo(latest, fork: false)!;
+        var forkInfo = rc.CreateStartInfo(latest, fork: true)!;
+        Assert(continueInfo.ArgumentList.SkipWhile(x => x != "remote-control").SequenceEqual(["remote-control", "-c"]) && continueInfo.WorkingDirectory == rcHome && !continueInfo.CreateNoWindow,
+            "remote control first reattaches in the session folder with a visible console");
+        Assert(forkInfo.ArgumentList.SkipWhile(x => x != "--resume").SequenceEqual(["--resume", latestId.ToString(), "--fork-session", "--remote-control"]),
+            "remote control falls back to forking the latest conversation");
+        Assert(!rc.TryBegin(), "remote control is off by default");
+        rc.Enabled = true;
+        Assert(rc.TryBegin() && !rc.TryBegin(), "remote control triggers once per cooldown (wake + packet, broadcast repeats)");
+        rcClock.Now += AgentHud.RemoteControlLauncher.Cooldown;
+        Assert(rc.TryBegin(), "remote control can trigger again after the cooldown");
+    }
+    finally { try { Directory.Delete(rcHome, true); } catch (IOException) { } }
+}
 // OpenCode discovery uses an isolated SQLite fixture, never the user's database.
 var openHome = Path.Combine(Path.GetTempPath(), "agenthud-opencode-" + Guid.NewGuid());
 try
@@ -859,6 +905,81 @@ finally { if (Directory.Exists(cursorAppData)) Directory.Delete(cursorAppData, t
     var neither = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, AgentHud.ClaudeLimitSnapshot.None, now, null);
     Assert(neither.Source == AgentHud.ClaudeLimitSource.None && neither.FiveHour is null && neither.SevenDay is null,
         "No data from either source falls back to None so the caller can use the token-budget estimate");
+}
+
+// Claude Code account identity + CLAUDE_CONFIG_DIR roots (no real credentials).
+{
+    var accountHome = Path.Combine(Path.GetTempPath(), "AgentHud-account-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(accountHome);
+    try
+    {
+        var orgA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        var orgB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        await File.WriteAllTextAsync(Path.Combine(accountHome, ".claude.json"),
+            $"{{\"oauthAccount\":{{\"organizationUuid\":\"{orgA}\",\"emailAddress\":\"a@example.com\",\"displayName\":\"Alice\"}}}}");
+        var identity = ClaudeAccountIdentity.Read(Path.Combine(accountHome, ".claude.json"));
+        Assert(identity.OrganizationUuid == orgA && identity.Email == "a@example.com" && identity.Label == "a@example.com",
+            "oauthAccount identity reads org + email without credentials");
+        Assert(ClaudeAccountIdentity.Read(Path.Combine(accountHome, "missing.json")) == ClaudeAccountIdentity.None,
+            "missing .claude.json is None");
+        Assert(ClaudeAccountIdentity.Read(Path.Combine(accountHome, ".claude.json")) is { HasOrg: true },
+            "HasOrg is true when organizationUuid parses");
+
+        var work = Path.Combine(accountHome, ".claude-work");
+        Directory.CreateDirectory(Path.Combine(work, "sessions"));
+        await File.WriteAllTextAsync(Path.Combine(work, ".claude.json"),
+            $"{{\"oauthAccount\":{{\"organizationUuid\":\"{orgB}\",\"emailAddress\":\"b@example.com\"}}}}");
+        var roots = ClaudeConfigRoot.Discover(accountHome);
+        Assert(roots.Any(x => x.IsDefault) && roots.Any(x => !x.IsDefault && x.ConfigDir.Equals(Path.GetFullPath(work), StringComparison.OrdinalIgnoreCase)),
+            "Discover finds default ~/.claude and sibling .claude-work with sessions");
+        Assert(roots.Single(x => !x.IsDefault).Identity.OrganizationUuid == orgB, "non-default root reads nested .claude.json");
+
+        Directory.CreateDirectory(Path.Combine(accountHome, ".claude", "sessions"));
+        var sessionId = Guid.NewGuid().ToString();
+        await File.WriteAllTextAsync(Path.Combine(accountHome, ".claude", "sessions", "a.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { pid = Environment.ProcessId, sessionId, status = "busy" }));
+        var workSession = Guid.NewGuid().ToString();
+        await File.WriteAllTextAsync(Path.Combine(work, "sessions", "b.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { pid = Environment.ProcessId, sessionId = workSession, status = "busy" }));
+        var found = await new ClaudeCodeProvider(accountHome).DiscoverAsync(CancellationToken.None);
+        Assert(found.Count == 2, "sessions from default and CLAUDE_CONFIG_DIR-style roots are both discovered");
+        Assert(found.Single(x => x.Id == "claude:" + sessionId).AccountOrgId == orgA
+            && found.Single(x => x.Id == "claude:" + workSession).AccountOrgId == orgB,
+            "each session is tagged with its config root organizationUuid");
+        Assert(found.Single(x => x.Id == "claude:" + workSession).ClaudeConfigDir?.Equals(Path.GetFullPath(work), StringComparison.OrdinalIgnoreCase) == true,
+            "each session carries its config root dir");
+
+        // statusLine 연동: 루트마다 settings.json에 등록하고 출력 폴더를 분리
+        var appData = Path.Combine(accountHome, "appdata");
+        await File.WriteAllTextAsync(Path.Combine(work, "settings.json"), "{\"statusLine\":{\"type\":\"command\",\"command\":\"echo work\"}}");
+        var links = new ClaudeLimitLinks(accountHome, appData);
+        links.Link();
+        Assert(links.IsLinked && links.Links.Count == 2 && links.Links.All(x => x.IsLinked), "Link registers statusLine in every config root");
+        var workDir = ClaudeLimitLink.DataDirectoryFor(roots.Single(x => !x.IsDefault), appData);
+        Assert(workDir != appData && File.ReadAllText(Path.Combine(workDir, "claude-statusline-inner.txt")) == "echo work",
+            "non-default root gets its own output dir and chains its existing status line");
+        var reset = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        await File.WriteAllTextAsync(Path.Combine(workDir, "claude-limits.json"), $"{{\"rate_limits\":{{\"five_hour\":{{\"used_percentage\":42,\"resets_at\":{reset}}}}}}}");
+        Assert(links.ReadSnapshot(work).FiveHour?.UsedPercent == 42 && !links.ReadSnapshot(null).HasData,
+            "snapshot is read per config root, not mixed with the default account");
+        Assert(!links.ReadSnapshot(Path.Combine(accountHome, ".claude-unknown")).HasData, "unknown root returns no snapshot");
+        links.Unlink();
+        Assert(!links.Links.Any(x => x.IsLinked) && File.ReadAllText(Path.Combine(work, "settings.json")).Contains("echo work"),
+            "Unlink restores each root's previous status line");
+
+        var linkTime = new TestTimeProvider();
+        var lazy = new ClaudeLimitLinks(accountHome, appData, linkTime);
+        lazy.Link();
+        var late = Path.Combine(accountHome, ".claude-late");
+        Directory.CreateDirectory(Path.Combine(late, "sessions"));
+        lazy.Sync(true);
+        Assert(lazy.Links.Count == 2, "Sync waits for its interval before rediscovering roots");
+        linkTime.Now += TimeSpan.FromMinutes(2);
+        lazy.Sync(true);
+        Assert(lazy.Links.Count == 3 && lazy.Links.All(x => x.IsLinked), "Sync links a newly discovered root when linking is on");
+        lazy.Unlink();
+    }
+    finally { try { Directory.Delete(accountHome, true); } catch (IOException) { } }
 }
 Console.WriteLine("All registry and discovery checks passed.");
 

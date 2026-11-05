@@ -58,6 +58,7 @@ Api.ConnectFailed	Connection failed (network or WebView2 error)	연결 실패 (�
 Api.RequestFailed	Request failed (HTTP {0}{1})	요청 실패 (HTTP {0}{1})
 Api.NoLimits	No limits found in the response	응답에서 한도를 찾지 못함
 Api.Connected	Connected · updated {0:HH:mm}	연결됨 · {0:HH:mm} 갱신
+Api.ConnectedPartial	Connected {0}/{1} · updated {2:HH:mm}	연결됨 {0}/{1} · {2:HH:mm} 갱신
 Api.ConnectError	Connection failed: {0}	연결 실패: {0}
 Api.Disabled	Off (advanced option)	꺼짐 (고급 옵션)
 Settings.Title	Settings	설정
@@ -90,7 +91,7 @@ Settings.AutoResume	Resume automatically after a usage limit resets	사용량 �
 Settings.ResumePromptTip	Message to send when resuming	재개할 때 보낼 메시지
 Settings.AutoResumeHint	Resumes a Claude or Codex conversation stopped by a usage limit once via the CLI, 1 minute after the reset. Only file edits are auto-approved (Claude acceptEdits, Codex workspace-write), and you have to reopen the VS Code conversation tab to see the progress. Limits that reset more than 30 minutes ago are left alone.	한도로 멈춘 Claude·Codex 대화를 리셋 1분 뒤 CLI로 한 번 이어 실행합니다. 파일 편집만 자동 허용되고(Claude acceptEdits, Codex workspace-write), 진행 내용은 VS Code 대화 탭을 다시 열어야 보입니다. 리셋 후 30분이 지난 한도는 건드리지 않습니다.
 Settings.ClaudeLink	Link real Claude limits (via status line, recommended)	Claude 실제 한도 연동 (상태줄 사용, 권장)
-Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
+Settings.ClaudeLinkHint	Registers a script as the statusLine in ~/.claude/settings.json (and in each CLAUDE_CONFIG_DIR / profile folder found, kept separate per account) to receive the Pro/Max 5-hour and weekly limits. Your existing status line keeps running and is restored when you turn this off. Sessions that are already open may need a restart, and values update only while a session is open. Turned on by default. The status line does not run inside the VS Code extension, so values stop updating there and the HUD then marks the number as Stale.	~/.claude/settings.json(그리고 발견된 각 CLAUDE_CONFIG_DIR·프로필 폴더, 계정별로 따로)의 statusLine에 스크립트를 등록해 Pro·Max의 5시간·주간 한도를 받아옵니다. 기존 상태줄은 그대로 이어서 실행하고, 해제하면 복원합니다. 이미 열린 세션은 다시 시작해야 적용될 수 있고, 세션이 열려 있을 때만 갱신됩니다. 기본적으로 켜져 있습니다. VS Code 확장에서는 상태줄이 실행되지 않으므로 거기서는 값이 더 이상 갱신되지 않고, 그러면 숫자에 "오래됨" 표시가 붙습니다.
 Settings.ClaudeApi	Claude usage API (advanced — for VS Code extension users)	Claude 사용량 API (고급 — VS Code 확장 사용자용)
 Settings.ClaudeApiEnable	Use the claude.ai usage API (advanced, unofficial)	claude.ai 사용량 API 사용 (고급, 비공식)
 Settings.ClaudeApiWarn	Uses your claude.ai web session cookie. Unofficial and sensitive — turn this on only if you need it.	claude.ai 웹 세션 쿠키를 사용합니다. 비공식이며 민감한 정보이므로 필요할 때만 켜세요.
@@ -98,14 +99,19 @@ Settings.OrgId	Organization ID	Organization ID
 Settings.SessionKey	sessionKey cookie	sessionKey 쿠키
 Settings.Save	Save	저장
 Settings.DeleteKey	Delete key	키 삭제
-Settings.ClaudeApiHint	Log in on claude.ai, then click Save. The session is encrypted for this Windows user and used only to fetch usage every 5 minutes. Intended for VS Code extension users, since the status line above does not run there. Agent HUD uses whichever of the status line and this API has the fresher valid value.	claude.ai에 로그인한 뒤 저장을 누르세요. 세션은 Windows 현재 사용자용으로 암호화되며 5분마다 사용량만 조회합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다. Agent HUD는 상태줄과 이 API 중 더 신선하고 유효한 쪽을 사용합니다.
+Settings.ClaudeApiHint	Add each claude.ai account you use. Sessions are encrypted for this Windows user and polled every 5 minutes. Agent HUD matches Claude Code's signed-in organization (from ~/.claude.json or CLAUDE_CONFIG_DIR) and shows that account's usage. Intended for VS Code extension users, since the status line above does not run there.	쓰는 claude.ai 계정을 각각 추가하세요. 세션은 Windows 현재 사용자용으로 암호화되며 5분마다 조회합니다. Agent HUD는 Claude Code에 로그인된 organization(~/.claude.json 또는 CLAUDE_CONFIG_DIR)과 맞는 계정의 사용량을 표시합니다. 위 상태줄이 실행되지 않는 VS Code 확장 사용자를 위한 기능입니다.
 Claude.Login	Login	로그인
+Claude.AddAccount	Add account	계정 추가
 Claude.Refresh	Refresh	새로고침
 Claude.Logout	Logout	로그아웃
+Claude.LogoutAll	Remove all	모두 제거
+Claude.RemoveAccount	Remove	제거
 Claude.LoginTitle	Sign in to Claude	Claude 로그인
-Claude.LoginHint	After signing in, click Save to store this session securely. Organization ID is detected automatically.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다. Organization ID는 자동으로 찾습니다.
+Claude.LoginHint	After signing in, click Save to store this session securely. Organization ID is detected automatically. Add another account the same way.	로그인 후 저장을 누르면 세션을 암호화해 보관합니다. Organization ID는 자동으로 찾습니다. 같은 방식으로 계정을 더 추가할 수 있습니다.
 Claude.LoginRequired	Log in again on claude.ai	claude.ai에 다시 로그인해 주세요
 Claude.LogoutFailed	Could not remove the saved Claude session	저장된 Claude 세션을 삭제하지 못했습니다
+Claude.Detected	Claude Code account: {0}	Claude Code 계정: {0}
+Claude.DetectedUnknown	Claude Code account: unknown	Claude Code 계정: 알 수 없음
 Settings.Budget	Claude usage budget when not linked (million tokens; 0 shows only the total, no bar)	연동하지 않을 때 Claude 사용량 예산 (백만 토큰, 0이면 막대 없이 합계만)
 Settings.Budget5h	5 hours	5시간
 Settings.BudgetWeek	Weekly	주간
@@ -174,3 +180,16 @@ Settings.DiscordComplete	When a task completes	작업 완료 시
 Settings.DiscordWebhook	Webhook URL	웹훅 URL
 Settings.DiscordTest	Test	테스트
 Settings.DiscordHint	Create a webhook in Discord: channel settings → Integrations → Webhooks. Only the agent, project name and state are sent, never conversation content. The URL works like a password: it is encrypted so only the current user on this PC can read it. Usage-limit resets are sent too while 'Notify when a usage limit resets' is on.	Discord 채널 설정 → 연동 → 웹훅에서 만드세요. 에이전트·프로젝트명·상태만 전송하고 대화 내용은 보내지 않습니다. URL은 비밀번호와 같으므로 이 PC의 현재 사용자만 풀 수 있게 암호화해 저장합니다. '사용량 한도가 풀리면 알림'이 켜져 있으면 한도 해제도 함께 보냅니다.
+Settings.RemoteControl	Open Remote Control on the latest Claude session when a magic packet arrives	매직패킷을 받으면 최근 Claude 세션에 Remote Control 열기
+Settings.RemoteControlPort	Magic packet UDP port	매직패킷 UDP 포트
+Settings.RemoteControlPassword	SecureOn password (optional, 4 or 6 hex bytes, e.g. 01-23-45-67-89-AB)	SecureOn 비밀번호 (선택, 16진수 4·6바이트, 예: 01-23-45-67-89-AB)
+Settings.RemoteControlListening	Listening for magic packets on UDP {0}	UDP {0}에서 매직패킷 수신 중
+Settings.RemoteControlBindFailed	Can't listen on UDP {0}: {1}	UDP {0}을(를) 열 수 없음: {1}
+Settings.RemoteControlBadPassword	Invalid password: use 4 or 6 hex bytes. Magic packets are ignored until it's fixed.	비밀번호 형식이 틀렸습니다. 16진수 4·6바이트로 입력하세요. 고칠 때까지 매직패킷을 무시합니다.
+Settings.RemoteControlHint	Works while the PC is awake: if you woke it with Wake-on-LAN/WAN, send the magic packet once more after 10–20 seconds. First reattaches with claude remote-control -c; if there's nothing recent to reattach, forks the latest Claude conversation (--fork-session) so the original VS Code tab is untouched. The PC stays awake while it runs. Allow the port in Windows Firewall.	깨어 있을 때 동작합니다. WoL(LAN·WAN)로 깨웠다면 10~20초 뒤 매직패킷을 한 번 더 보내세요. 먼저 claude remote-control -c로 다시 붙고, 이어 붙일 최근 기록이 없으면 최근 Claude 대화를 fork(--fork-session)해서 열므로 VS Code의 원래 탭은 그대로입니다. 실행 중에는 PC가 잠들지 않습니다. Windows 방화벽에서 포트를 허용하세요.
+Notify.RemoteControlTitle	Remote Control · {0}	Remote Control · {0}
+Notify.RemoteControlContinued	Reattached to the last Remote Control session. Open it from claude.ai/code or the Claude app. ({0})	최근 Remote Control 세션에 다시 붙었습니다. claude.ai/code 또는 Claude 앱에서 여세요. ({0})
+Notify.RemoteControlForked	Forked "{0}" and opened it for Remote Control. Open it from claude.ai/code or the Claude app.	"{0}"를 fork해서 Remote Control로 열었습니다. claude.ai/code 또는 Claude 앱에서 여세요.
+Notify.RemoteControlNoSession	There is no Claude session to open.	열 Claude 세션이 없습니다.
+Notify.RemoteControlNoCli	Couldn't find the claude CLI.	claude CLI를 찾을 수 없습니다.
+Notify.RemoteControlFailed	Couldn't start Remote Control. See remote-control.log.	Remote Control을 시작하지 못했습니다. remote-control.log를 확인하세요.

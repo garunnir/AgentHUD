@@ -47,27 +47,61 @@ internal sealed class ClaudeLoginWindow : Window
             var sessionKey = cookies.FirstOrDefault(c => c.Name.Equals("sessionKey", StringComparison.OrdinalIgnoreCase))?.Value;
             if (string.IsNullOrWhiteSpace(sessionKey)) throw new InvalidOperationException("No sessionKey");
             var orgId = cookies.FirstOrDefault(c => c.Name.Equals("lastActiveOrg", StringComparison.OrdinalIgnoreCase))?.Value;
-            if (!Guid.TryParse(orgId, out _)) orgId = await FetchOrgIdAsync();
+            var (resolvedOrg, email, name) = await FetchAccountAsync(orgId);
             if (_closed) return;
+            orgId = resolvedOrg ?? orgId;
             if (!Guid.TryParse(orgId, out _)) throw new InvalidOperationException("No organization");
-            _api.SaveLogin(sessionKey, orgId);
+            _api.SaveLogin(sessionKey, orgId, email, name);
             Close();
         }
         catch (Exception e2) when (e2 is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or InvalidOperationException or System.Runtime.InteropServices.COMException or JsonException or TimeoutException or TaskCanceledException)
         { if (!_closed) { _status.Text = Loc.T("Claude.LoginRequired"); _save.IsEnabled = true; } }
     }
-    // Cookie jar already has the session; same-origin fetch picks the active org without DevTools copy-paste.
-    private async Task<string?> FetchOrgIdAsync()
+    // Cookie jar already has the session; same-origin fetch picks the active org + display fields without DevTools copy-paste.
+    private async Task<(string? OrgId, string? Email, string? Name)> FetchAccountAsync(string? preferredOrg)
     {
         var raw = await _web.CoreWebView2.ExecuteScriptAsync(
-            "(async()=>{try{const r=await fetch('/api/organizations',{credentials:'include'});if(!r.ok)return '';return await r.text()}catch{return ''}})()");
-        var text = JsonSerializer.Deserialize<string>(raw) ?? "";
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        using var doc = JsonDocument.Parse(text);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
-        foreach (var org in doc.RootElement.EnumerateArray())
-            if (org.TryGetProperty("uuid", out var uuid) && uuid.ValueKind == JsonValueKind.String && Guid.TryParse(uuid.GetString(), out _))
-                return uuid.GetString();
-        return null;
+            "(async()=>{try{const [o,a]=await Promise.all([fetch('/api/organizations',{credentials:'include'}),fetch('/api/account',{credentials:'include'}).catch(()=>null)]);const orgs=o.ok?await o.text():'';const acc=a&&a.ok?await a.text():'';return JSON.stringify({orgs,acc})}catch{return ''}})()");
+        var wrapped = JsonSerializer.Deserialize<string>(raw) ?? "";
+        if (string.IsNullOrWhiteSpace(wrapped)) return (null, null, null);
+        using var outer = JsonDocument.Parse(wrapped);
+        string? orgId = null, email = null, name = null;
+        if (outer.RootElement.TryGetProperty("orgs", out var orgsText) && orgsText.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(orgsText.GetString()))
+        {
+            using var orgs = JsonDocument.Parse(orgsText.GetString()!);
+            if (orgs.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var org in orgs.RootElement.EnumerateArray())
+                {
+                    if (!org.TryGetProperty("uuid", out var uuid) || uuid.ValueKind != JsonValueKind.String
+                        || !Guid.TryParse(uuid.GetString(), out _)) continue;
+                    var id = uuid.GetString();
+                    if (orgId is null || (preferredOrg is not null && string.Equals(id, preferredOrg, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        orgId = id;
+                        if (org.TryGetProperty("name", out var orgName) && orgName.ValueKind == JsonValueKind.String)
+                            name = orgName.GetString();
+                        if (preferredOrg is not null && string.Equals(id, preferredOrg, StringComparison.OrdinalIgnoreCase))
+                            break;
+                    }
+                }
+            }
+        }
+        if (outer.RootElement.TryGetProperty("acc", out var accText) && accText.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(accText.GetString()))
+        {
+            try
+            {
+                using var acc = JsonDocument.Parse(accText.GetString()!);
+                var root = acc.RootElement;
+                if (root.TryGetProperty("email", out var em) && em.ValueKind == JsonValueKind.String) email = em.GetString();
+                else if (root.TryGetProperty("email_address", out em) && em.ValueKind == JsonValueKind.String) email = em.GetString();
+                if (root.TryGetProperty("display_name", out var dn) && dn.ValueKind == JsonValueKind.String) name ??= dn.GetString();
+                else if (root.TryGetProperty("name", out dn) && dn.ValueKind == JsonValueKind.String) name ??= dn.GetString();
+            }
+            catch (JsonException) { }
+        }
+        return (orgId ?? (Guid.TryParse(preferredOrg, out _) ? preferredOrg : null), email, name);
     }
 }

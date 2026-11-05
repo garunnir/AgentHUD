@@ -19,6 +19,7 @@ src/AgentHud.Core/          net9.0 class library — no UI, all parsing/state lo
   UpdateChecker.cs          picks a newer GitHub release + matching zip asset (auto-update)
   RateLimitNotifier.cs      decides which sessions get a "limit reset" notification
   MemoStore.cs              global + per-project notes (memos.json)
+  ClaudeLimitLink.cs        statusLine script per Claude config root (~/.claude, CLAUDE_CONFIG_DIR) to read rate_limits
   Loc.cs, Strings.tsv       localization table — single source for Windows AND macOS (see Conventions)
 src/AgentHud/               net9.0-windows WPF app (WinExe)
   MainWindow.xaml(.cs)      the HUD: session list, minimized dot bar, usage gauges, settings
@@ -27,7 +28,6 @@ src/AgentHud/               net9.0-windows WPF app (WinExe)
   AppUpdater.cs             auto-update: download + SHA-256 + extract, apply-update.ps1 swaps files after exit
   ClaudeUsageApi.cs         claude.ai usage API polling (via WebViewFetcher, DPAPI-stored key)
   WebViewFetcher.cs         off-screen WebView2 used to get past Cloudflare
-  ClaudeLimitLink.cs        installs a statusLine script in ~/.claude/settings.json to read rate_limits
   Windows/                  VirtualDesktopPin (PinWindow P/Invoke), VirtualDesktopFollower (fallback)
   native/                   VirtualDesktopAccessor.dll + vda.json (bot-managed, do not hand-edit)
 src/AgentHud.macOS/         Swift Package (macOS 14+), separate port, also has OpenCode providers
@@ -64,6 +64,7 @@ docs/                       vscode-session-open.md (VS Code URI investigation), 
 | Usage-limit reset time parsing | `RateLimitParser.ParseReset`, `CodexProvider.ExhaustedWindowReset` |
 | Claude limit source choice / staleness | `ClaudeLimitPolicy`, `ClaudeLimitSnapshot` (`src/AgentHud.Core/ClaudeLimits.cs`), `ClaudeLimitLink`, `ClaudeUsageApi.Snapshot`/`Enabled` |
 | Auto-resume command line / CLI lookup | `AutoResumer.CreateStartInfo`, `FindOnPath`, `NewestExtensionBinary` |
+| Magic packet → Claude Remote Control | `MagicPacketListener` (UDP, MAC/SecureOn match), `RemoteControlLauncher` (`remote-control -c`, then `--resume --fork-session --remote-control`), `MainWindow.TriggerRemoteControl` |
 | Usage gauges (5h / weekly, pace marker) | `MainWindow.UpdateUsage`, `UsageRow`, `ClaudeUsageApi`, `ClaudeLimitLink` |
 | Double-click → VS Code | `MainWindow.OpenInVsCode`, `ConversationUri`; background in docs/vscode-session-open.md |
 | Status colors | `StateBrushConverter` |
@@ -100,6 +101,6 @@ macOS: `./scripts/build_app.sh` (output `src/AgentHud.macOS/dist/AgentHud.app`).
 
 ## Runtime files
 
-`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile), `update/` (downloaded release zip, staged files, `apply-update.ps1`, `update.log`).
+`%LOCALAPPDATA%\AgentHud\`: `placement.json` (window position + all settings), `memos.json`, `auto-resume.log`, `remote-control.log`, `claude-statusline.ps1` + `claude-limits.json` + `claude-statusline-inner.txt` (status-line link, default on; chains/restores any existing user status line; non-default config roots get the same files under `claude-roots/<name>-<hash>/`), `claude-session.bin` (DPAPI-encrypted claude.ai sessionKey, opt-in advanced option), `webview2/` (WebView2 profile), `update/` (downloaded release zip, staged files, `apply-update.ps1`, `update.log`).
 
 macOS: `~/Library/Application Support/AgentHud/` holds the equivalent `claude-statusline.sh` + `claude-limits.json` + `claude-statusline-inner.txt` (see `ClaudeLimitLink.swift`). No sessionKey API is ported to macOS.

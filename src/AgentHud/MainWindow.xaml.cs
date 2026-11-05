@@ -75,6 +75,54 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new(nameof(ResumePrompt)));
         }
     }
+    // 깨어 있을 때 WoL 매직패킷을 받으면 최근 Claude 세션을 Remote Control로 연다.
+    // 절전 중 wake 원인은 NIC가 아니라 PCIe 루트 포트로 기록되고 키보드·마우스와 구분되지 않아 쓰지 않음 → 깨운 뒤 패킷을 한 번 더 보내는 방식
+    private readonly RemoteControlLauncher _remote = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
+    private MagicPacketListener? _magicListener;
+    public bool RemoteControlOnWake { get => _remote.Enabled; set { if (_remote.Enabled == value) return; _remote.Enabled = value; PropertyChanged?.Invoke(this, new(nameof(RemoteControlOnWake))); RestartMagicListener(); } }
+    private int _remoteControlPort = 9;
+    public int RemoteControlPort { get => _remoteControlPort; set { value = Math.Clamp(value, 1, 65535); if (_remoteControlPort == value) return; _remoteControlPort = value; PropertyChanged?.Invoke(this, new(nameof(RemoteControlPort))); RestartMagicListener(); } }
+    private string _remoteControlPassword = "";
+    public string RemoteControlPassword { get => _remoteControlPassword; set { value ??= ""; if (_remoteControlPassword == value) return; _remoteControlPassword = value; PropertyChanged?.Invoke(this, new(nameof(RemoteControlPassword))); RestartMagicListener(); } }
+    private string _remoteControlStatus = "";
+    public string RemoteControlStatus { get => _remoteControlStatus; private set => SetField(ref _remoteControlStatus, value, nameof(RemoteControlStatus)); }
+    private void RestartMagicListener()
+    {
+        _magicListener?.Dispose(); _magicListener = null;
+        if (!_remote.Enabled) { RemoteControlStatus = ""; return; }
+        // 형식이 틀린 비밀번호로는 아무 패킷도 받지 않음(비밀번호 없이 열리는 것 방지)
+        if (!MagicPacketListener.TryParsePassword(_remoteControlPassword, out var password)) { RemoteControlStatus = Loc.T("Settings.RemoteControlBadPassword"); return; }
+        try
+        {
+            var macs = RemoteControlLauncher.PhysicalAdapters().Select(n => n.GetPhysicalAddress().GetAddressBytes()).ToList();
+            _magicListener = new MagicPacketListener(_remoteControlPort, macs, password);
+            _magicListener.Received += () => Dispatcher.BeginInvoke(() => TriggerRemoteControl("magic packet"));
+            RemoteControlStatus = Loc.F("Settings.RemoteControlListening", _remoteControlPort);
+        }
+        catch (System.Net.Sockets.SocketException e) { RemoteControlStatus = Loc.F("Settings.RemoteControlBindFailed", _remoteControlPort, e.Message); }
+    }
+    private async void TriggerRemoteControl(string reason)
+    {
+        if (!_remote.TryBegin()) return;
+        var result = await _remote.LaunchAsync(_registry.GetAllAgents(), reason);
+        SleepInhibitor.Set(_remote.IsRunning || _registry.GetAllAgents().Any(x => x.DisplayState is AgentState.Working or AgentState.Thinking));
+        if (!NotificationsEnabled) return;
+        var body = result.Outcome switch
+        {
+            RemoteControlOutcome.Continued => Loc.F("Notify.RemoteControlContinued", result.Session!.DisplayTitle),
+            RemoteControlOutcome.Forked => Loc.F("Notify.RemoteControlForked", result.Session!.DisplayTitle),
+            RemoteControlOutcome.NoSession => Loc.T("Notify.RemoteControlNoSession"),
+            RemoteControlOutcome.NoCli => Loc.T("Notify.RemoteControlNoCli"),
+            _ => Loc.T("Notify.RemoteControlFailed")
+        };
+        var header = Loc.F("Notify.RemoteControlTitle", result.Session?.ProjectName ?? "Claude");
+        if (DiscordEnabled) _ = _discord.SendAsync($"{header}: {body}");
+        var w = new NotificationWindow(header, body, null);
+        w.Loaded += (_, _) => LayoutNotifications();
+        w.Closed += (_, _) => { _notifications.Remove(w); LayoutNotifications(); };
+        _notifications.Add(w);
+        w.Show();
+    }
     private readonly RateLimitNotifier _limitNotifier = new();
     public bool NotifyLimitReset
     {
@@ -324,14 +372,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         InitializeComponent(); DataContext = this;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         _codex = new CodexProvider(home);
-        _claudeApi.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus))); UpdateUsage(_registry.GetAllAgents()); });
+        _claudeApi.Updated += () => Dispatcher.BeginInvoke(() => { RefreshClaudeAccountUi(); UpdateUsage(_registry.GetAllAgents()); });
         Closed += (_, _) => { _claudeApi.Dispose(); _openCodeGo.Dispose(); _cursorUsage.Dispose(); _updater.Dispose(); };
+        RefreshClaudeAccountUi();
         _openCodeGo.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(OpenCodeGoStatus))); UpdateUsage(_registry.GetAllAgents()); });
         _cursorUsage.Updated += () => Dispatcher.BeginInvoke(() => { PropertyChanged?.Invoke(this, new(nameof(CursorUsageStatus))); UpdateUsage(_registry.GetAllAgents()); });
         _discovery = new AgentDiscoveryService([new ClaudeCodeProvider(home), _codex, new OpenCodeProvider(home, dataHome: Environment.GetEnvironmentVariable("XDG_DATA_HOME")), new CursorProvider()], _registry);
         _registry.Changed += (_, _) => Dispatcher.Invoke(UpdateSessions);
         ContentRendered += (_, _) => _desktopFollower ??= new VirtualDesktopFollower(new WindowInteropHelper(this).Handle);
         Closed += (_, _) => { _desktopFollower?.Dispose(); SleepInhibitor.Set(false); };
+        _remote.Exited += () => Dispatcher.BeginInvoke(UpdateSessions);
+        Closed += (_, _) => _magicListener?.Dispose();
         _discord.WebhookUrl = DiscordWebhookStore.Load();
         _discord.LogDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud");
         Loaded += (_, _) => { RestorePlacement(); _discovery.Start(); _claudeApi.Start(); _openCodeGo.Start(); _cursorUsage.Start(); StartUpdateTimer(); };
@@ -344,7 +395,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var all = _registry.GetAllAgents();
         _resumer.Check(all);
-        SleepInhibitor.Set(all.Any(x => x.DisplayState is AgentState.Working or AgentState.Thinking));
+        // 띄운 Remote Control이 원격 입력을 기다리는 동안 다시 잠들지 않게 함
+        SleepInhibitor.Set(_remote.IsRunning || all.Any(x => x.DisplayState is AgentState.Working or AgentState.Thinking));
         PlayStateSounds(all);
         // 숨긴 세션은 초기화 전까지 숨기되, 새로 대기·완료 상태가 되면 다시 표시
         foreach (var (id, seen) in _dismissed.ToArray())
@@ -368,8 +420,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     // 하단 사용량 막대. 감지된 LLM이 없으면 비어 있음
     public ObservableCollection<UsageRow> UsageRows { get; } = [];
     // Claude는 서버 한도를 로컬에서 알 수 없어, 사용자가 정한 토큰 예산(백만 단위, 0이면 막대 없이 합계만)을 기준으로 함
-    private readonly ClaudeLimitLink _claudeLink = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
-    // 켜면 Claude Code 상태줄 스크립트를 등록해 서버 기준 한도를 받아옴(~/.claude/settings.json 수정). 기본값(default)
+    private readonly ClaudeLimitLinks _claudeLink = new(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud"));
+    // 켜면 Claude Code 상태줄 스크립트를 등록해 서버 기준 한도를 받아옴(발견된 설정 루트마다 settings.json 수정). 기본값(default)
     // 사용자가 명시적으로 끈 것(false)과 "아직 물어본 적 없음"(null)을 구분해야 해서 선택 여부는 placement.json에 별도 저장
     private bool? _claudeLinkChoice;
     public bool ClaudeLimitLinked
@@ -402,21 +454,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateUsage(_registry.GetAllAgents());
         }
     }
-    public void LoginClaude(Window owner)
+    public ObservableCollection<ClaudeApiAccount> ClaudeApiAccounts { get; } = [];
+    public string ClaudeDetectedAccount { get; private set; } = "";
+    private void RefreshClaudeAccountUi()
     {
-        new ClaudeLoginWindow(_claudeApi, DataDirectory) { Owner = owner }.ShowDialog();
+        var accounts = _claudeApi.Accounts;
+        for (var i = 0; i < accounts.Count; i++)
+        {
+            if (i >= ClaudeApiAccounts.Count) ClaudeApiAccounts.Add(accounts[i]);
+            else if (ClaudeApiAccounts[i] != accounts[i]) ClaudeApiAccounts[i] = accounts[i];
+        }
+        while (ClaudeApiAccounts.Count > accounts.Count) ClaudeApiAccounts.RemoveAt(ClaudeApiAccounts.Count - 1);
         PropertyChanged?.Invoke(this, new(nameof(ClaudeOrgId)));
         PropertyChanged?.Invoke(this, new(nameof(ClaudeApiHasKey)));
         PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
+        PropertyChanged?.Invoke(this, new(nameof(ClaudeDetectedAccount)));
+    }
+    public void LoginClaude(Window owner)
+    {
+        new ClaudeLoginWindow(_claudeApi, DataDirectory) { Owner = owner }.ShowDialog();
+        RefreshClaudeAccountUi();
+        UpdateUsage(_registry.GetAllAgents());
     }
     public Task RefreshClaudeAsync() => _claudeApi.RefreshAsync();
     public void LogoutClaude()
     {
         try { _claudeApi.ClearLogin(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show(this, Loc.T("Claude.LogoutFailed")); }
-        PropertyChanged?.Invoke(this, new(nameof(ClaudeOrgId)));
-        PropertyChanged?.Invoke(this, new(nameof(ClaudeApiHasKey)));
-        PropertyChanged?.Invoke(this, new(nameof(ClaudeApiStatus)));
+        RefreshClaudeAccountUi();
+        UpdateUsage(_registry.GetAllAgents());
+    }
+    public void RemoveClaudeAccount(string orgId)
+    {
+        try { _claudeApi.RemoveAccount(orgId); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show(this, Loc.T("Claude.LogoutFailed")); }
+        RefreshClaudeAccountUi();
         UpdateUsage(_registry.GetAllAgents());
     }
     private static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud");
@@ -449,13 +521,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var claude = all.Where(x => x.AgentType == AgentType.ClaudeCode).ToArray();
         if (claude.Length > 0)
         {
+            // 가장 최근 활동 Claude 세션의 organizationUuid로 사용량 API 계정을, 설정 루트로 statusLine 값을 고른다.
+            var focus = claude.OrderByDescending(x => x.LastActivityAt).First();
+            var orgId = focus.AccountOrgId;
+            var accountLabel = focus.AccountEmail
+                ?? _claudeApi.Accounts.FirstOrDefault(x => string.Equals(x.OrgId, orgId, StringComparison.OrdinalIgnoreCase))?.Label
+                ?? orgId;
+            ClaudeDetectedAccount = string.IsNullOrWhiteSpace(accountLabel) ? Loc.T("Claude.DetectedUnknown") : Loc.F("Claude.Detected", accountLabel);
+            PropertyChanged?.Invoke(this, new(nameof(ClaudeDetectedAccount)));
+
+            var apiSnap = orgId is not null ? _claudeApi.SnapshotFor(orgId)
+                : _claudeApi.Accounts.Count == 1 ? _claudeApi.SnapshotFor(_claudeApi.Accounts[0].OrgId)
+                : ClaudeLimitSnapshot.None;
+            // statusLine 값은 설정 루트마다 따로 기록되므로 최근 세션의 루트 것만 쓴다(계정끼리 섞지 않음)
+            _claudeLink.Sync(_claudeLinkChoice ?? _claudeLink.IsLinked);
+            var statusSnap = _claudeLink.ReadSnapshot(focus.ClaudeConfigDir);
             // statusLine(기본, 공식 CLI 값)과 sessionKey API(선택, 비공식) 중 더 신선하고 유효한 쪽을 쓴다.
             // 정책은 ClaudeLimitPolicy.Pick에 있다(두 소스를 섞지 않고, 창별 resets_at도 따로 확인).
             var lastActivity = claude.Max(x => x.LastActivityAt).ToUniversalTime();
-            var pick = ClaudeLimitPolicy.Pick(_claudeLink.ReadSnapshot(), _claudeApi.Snapshot, now, lastActivity);
-            rows.Add(ClaudeLimitRow("5h", pick.FiveHour, pick.FiveHourStale, pick.UpdatedAt, claude.Sum(x => x.Tokens5h), _claudeBudget5h, now));
-            rows.Add(ClaudeLimitRow(UsageRow.Week, pick.SevenDay, pick.SevenDayStale, pick.UpdatedAt, claude.Sum(x => x.TokensWeek), _claudeBudgetWeek, now));
+            var pick = ClaudeLimitPolicy.Pick(statusSnap, apiSnap, now, lastActivity);
+            var sameOrgTokens = claude.Where(x => orgId is null || string.Equals(x.AccountOrgId, orgId, StringComparison.OrdinalIgnoreCase)).ToArray();
+            rows.Add(ClaudeLimitRow("5h", pick.FiveHour, pick.FiveHourStale, pick.UpdatedAt, sameOrgTokens.Sum(x => x.Tokens5h), _claudeBudget5h, now));
+            rows.Add(ClaudeLimitRow(UsageRow.Week, pick.SevenDay, pick.SevenDayStale, pick.UpdatedAt, sameOrgTokens.Sum(x => x.TokensWeek), _claudeBudgetWeek, now));
         }
+        else ClaudeDetectedAccount = "";
         // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
         if (all.Any(x => x.AgentType == AgentType.Codex))
         {
@@ -642,7 +731,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string PlacementPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentHud", "placement.json");
     private void RestorePlacement()
     {
-        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; DiscordEnabled = p.DiscordEnabled; DiscordNotifyAsk = p.DiscordNotifyAsk; DiscordNotifyComplete = p.DiscordNotifyComplete; NotificationsEnabled = p.NotificationsEnabled; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
+        try { if (File.Exists(PlacementPath)) { var p = JsonSerializer.Deserialize<Placement>(File.ReadAllText(PlacementPath)); if (p is not null) { UiLanguage = p.Language ?? Loc.Auto; ShowWaitingSymbols = p.ShowWaitingSymbols; ShowPaceMarker = p.ShowPaceMarker; CodexActiveMinutes = p.CodexActiveMinutes; AutoResume = p.AutoResume; NotifyLimitReset = p.NotifyLimitReset; NotifyVisibleOnly = p.NotifyVisibleOnly; ClaudeOrgId = p.ClaudeOrgId ?? ""; OpenCodeWorkspaceId = p.OpenCodeWorkspaceId ?? ""; ClaudeBudget5h = p.ClaudeBudget5h; ClaudeBudgetWeek = p.ClaudeBudgetWeek; _autoUpdateCheck = p.AutoUpdateCheck; DiscordEnabled = p.DiscordEnabled; DiscordNotifyAsk = p.DiscordNotifyAsk; DiscordNotifyComplete = p.DiscordNotifyComplete; NotificationsEnabled = p.NotificationsEnabled; RemoteControlPort = p.RemoteControlPort; RemoteControlPassword = p.RemoteControlPassword ?? ""; RemoteControlOnWake = p.RemoteControlOnWake; if (p.ResumePrompt is { } prompt) ResumePrompt = prompt; CompleteSoundEnabled = p.CompleteSoundEnabled && p.CompleteSound != SoundSetting.Off; CompleteSound = p.CompleteSound == SoundSetting.Off ? "Asterisk" : p.CompleteSound; CompleteSoundFile = p.CompleteSoundFile ?? ""; AskSoundEnabled = p.AskSoundEnabled && p.AskSound != SoundSetting.Off; AskSound = p.AskSound == SoundSetting.Off ? "Exclamation" : p.AskSound; AskSoundFile = p.AskSoundFile ?? ""; Left = p.Left; Top = p.Top; if (double.IsFinite(p.Width) && p.Width >= MinWidth) Width = p.Width; if (double.IsFinite(p.Height) && p.Height >= MinHeight) Height = p.Height; ApplyClaudeLimitDefaults(p); } } else { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); } } catch { Left = SystemParameters.WorkArea.Right - Width - 20; Top = 20; ApplyClaudeLimitDefaults(null); }
     }
     // 기존 사용자 마이그레이션: placement.json에 선택 기록이 없으면(처음 실행 또는 이전 버전 업그레이드) statusLine을
     // 조용히 한 번 연동(기본값, 실패해도 다음 실행에서 재시도). usage API는 이미 로그인해 둔
@@ -655,9 +744,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
     private void SavePlacement()
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck, DiscordEnabled = DiscordEnabled, DiscordNotifyAsk = DiscordNotifyAsk, DiscordNotifyComplete = DiscordNotifyComplete, NotificationsEnabled = NotificationsEnabled })); } catch { }
+        try { Directory.CreateDirectory(Path.GetDirectoryName(PlacementPath)!); var p = _minimized ? new Placement(_anchorRight - _restoreSize.Width, Top, _restoreSize.Width, _restoreSize.Height) : new Placement(Left, Top, ActualWidth, ActualHeight); File.WriteAllText(PlacementPath, JsonSerializer.Serialize(p with { Language = UiLanguage, ShowWaitingSymbols = ShowWaitingSymbols, ShowPaceMarker = ShowPaceMarker, CodexActiveMinutes = CodexActiveMinutes, AutoResume = AutoResume, ResumePrompt = _resumer.CustomPrompt, NotifyLimitReset = NotifyLimitReset, NotifyVisibleOnly = NotifyVisibleOnly, ClaudeOrgId = ClaudeOrgId, OpenCodeWorkspaceId = OpenCodeWorkspaceId, ClaudeBudget5h = ClaudeBudget5h, ClaudeBudgetWeek = ClaudeBudgetWeek, CompleteSound = CompleteSound, CompleteSoundFile = CompleteSoundFile, AskSound = AskSound, AskSoundFile = AskSoundFile, CompleteSoundEnabled = CompleteSoundEnabled, AskSoundEnabled = AskSoundEnabled, ClaudeLinkEnabled = _claudeLinkChoice ?? ClaudeLimitLinked, ClaudeApiEnabled = ClaudeApiEnabled, AutoUpdateCheck = AutoUpdateCheck, DiscordEnabled = DiscordEnabled, DiscordNotifyAsk = DiscordNotifyAsk, DiscordNotifyComplete = DiscordNotifyComplete, NotificationsEnabled = NotificationsEnabled, RemoteControlOnWake = RemoteControlOnWake, RemoteControlPort = RemoteControlPort, RemoteControlPassword = RemoteControlPassword.Length == 0 ? null : RemoteControlPassword })); } catch { }
     }
-    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true, bool DiscordEnabled = false, bool DiscordNotifyAsk = true, bool DiscordNotifyComplete = true, bool NotificationsEnabled = true);
+    private sealed record Placement(double Left, double Top, double Width = 280, double Height = 220, bool ShowWaitingSymbols = false, int CodexActiveMinutes = 5, bool AutoResume = false, string? ResumePrompt = null, bool NotifyLimitReset = true, bool NotifyVisibleOnly = true, double ClaudeBudget5h = 0, double ClaudeBudgetWeek = 0, string? ClaudeOrgId = null, string CompleteSound = "Asterisk", string? CompleteSoundFile = null, string AskSound = "Exclamation", string? AskSoundFile = null, bool CompleteSoundEnabled = true, bool AskSoundEnabled = true, string? Language = null, string? OpenCodeWorkspaceId = null, bool? ClaudeLinkEnabled = null, bool? ClaudeApiEnabled = null, bool AutoUpdateCheck = true, bool ShowPaceMarker = true, bool DiscordEnabled = false, bool DiscordNotifyAsk = true, bool DiscordNotifyComplete = true, bool NotificationsEnabled = true, bool RemoteControlOnWake = false, int RemoteControlPort = 9, string? RemoteControlPassword = null);
 }
 
 

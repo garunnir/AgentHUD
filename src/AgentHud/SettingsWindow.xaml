@@ -88,6 +88,17 @@
             <CheckBox Margin="0,14,0,0" IsChecked="{Binding AutoResume, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.AutoResume}"/>
             <TextBox Margin="0,6,0,0" Text="{Binding ResumePrompt, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding AutoResume}" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="80" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12" ToolTip="{local:Tr Settings.ResumePromptTip}"/>
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.AutoResumeHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
+            <CheckBox Margin="0,14,0,0" IsChecked="{Binding RemoteControlOnWake, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.RemoteControl}"/>
+            <StackPanel IsEnabled="{Binding RemoteControlOnWake}">
+              <DockPanel Margin="20,6,0,0">
+                <TextBox DockPanel.Dock="Right" Width="56" Text="{Binding RemoteControlPort, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalContentAlignment="Right" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
+                <TextBlock Text="{local:Tr Settings.RemoteControlPort}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock Margin="20,6,0,0" Text="{local:Tr Settings.RemoteControlPassword}" Foreground="#91A0B5" FontSize="11"/>
+              <TextBox Margin="20,2,0,0" Text="{Binding RemoteControlPassword, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" Background="#22FFFFFF" Foreground="#DCE3ED" CaretBrush="White" BorderThickness="0" Padding="4,2" FontSize="12"/>
+              <TextBlock Margin="20,4,0,0" Text="{Binding RemoteControlStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+            <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.RemoteControlHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
             <CheckBox Margin="0,14,0,0" IsChecked="{Binding DiscordEnabled, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.DiscordEnable}"/>
             <StackPanel IsEnabled="{Binding DiscordEnabled}">
               <CheckBox Margin="20,6,0,0" IsChecked="{Binding DiscordNotifyAsk, Mode=TwoWay}" Foreground="#DCE3ED" FontSize="12" Content="{local:Tr Settings.DiscordAsk}"/>
@@ -112,10 +123,21 @@
             <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.ClaudeApiWarn}" Foreground="#D9A24A" FontSize="11" TextWrapping="Wrap"/>
             <StackPanel IsEnabled="{Binding ClaudeApiEnabled}">
               <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                <Button Content="{local:Tr Claude.Login}" Click="ClaudeLogin_OnClick" Padding="6,2"/>
+                <Button Content="{local:Tr Claude.AddAccount}" Click="ClaudeLogin_OnClick" Padding="6,2"/>
                 <Button Content="{local:Tr Claude.Refresh}" Click="ClaudeRefresh_OnClick" Padding="6,2" Margin="6,0,0,0"/>
-                <Button Content="{local:Tr Claude.Logout}" Click="ClaudeLogout_OnClick" Padding="6,2" Margin="6,0,0,0"/>
+                <Button Content="{local:Tr Claude.LogoutAll}" Click="ClaudeLogout_OnClick" Padding="6,2" Margin="6,0,0,0"/>
               </StackPanel>
+              <TextBlock Margin="0,6,0,0" Text="{Binding ClaudeDetectedAccount}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
+              <ItemsControl Margin="0,4,0,0" ItemsSource="{Binding ClaudeApiAccounts}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <DockPanel Margin="0,2">
+                      <Button DockPanel.Dock="Right" Content="{local:Tr Claude.RemoveAccount}" Tag="{Binding OrgId}" Click="ClaudeRemoveAccount_OnClick" Padding="6,1" Margin="6,0,0,0"/>
+                      <TextBlock Text="{Binding Label}" Foreground="#DCE3ED" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
               <TextBlock Margin="0,4,0,0" Text="{Binding ClaudeApiStatus}" Foreground="#AEB8C6" FontSize="11" TextWrapping="Wrap"/>
               <TextBlock Margin="0,4,0,0" Text="{local:Tr Settings.ClaudeApiHint}" Foreground="#91A0B5" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>

@@ -34,6 +34,7 @@ Click the `–` button in the header, or double-click the header, to shrink the 
 - Optional sounds for completion and input or approval requests
 - Remaining usage gauges with reset times and an even-pace marker; Claude limits work out of the box, no setup needed
 - Usage-limit notifications and optional automatic resume
+- Optional Claude Remote Control from your phone, triggered by a Wake-on-LAN magic packet (Windows)
 - Update check on Windows: a new release shows a small dot in the header and an install item in the right-click menu; nothing installs without your confirmation
 - English and Korean UI, following the system language by default or selectable in Settings
 
@@ -131,6 +132,20 @@ Turn on **Settings → Resume automatically after a usage limit resets** to resu
 - Progress from an automatic resume may not appear live in a conversation tab that was already open. Double-click the session in the HUD before continuing there.
 - Sessions whose limits reset more than 30 minutes ago and subagent sessions are not resumed.
 - If the resumed turn reaches another limit, Agent HUD can try again after the new reset.
+
+## Remote Control from a magic packet
+
+On Windows, Agent HUD can open your most recent Claude Code session for [Remote Control](https://claude.ai/code) when it receives a Wake-on-LAN magic packet, so you can wake the PC from your phone and continue from claude.ai/code or the Claude app.
+
+Turn on **Settings → Alerts → Open Remote Control on the latest Claude session when a magic packet arrives** and set the UDP port your WoL sender uses (default `9`). Optionally set a SecureOn password (4 or 6 hex bytes) so that only packets with that password count.
+
+- **The PC must be awake.** A packet that wakes the PC from sleep is handled by the network card and never reaches Windows. If you used it to wake the PC, send the packet again after 10–20 seconds.
+- Agent HUD first runs `claude remote-control -c` in the session's folder to reattach to a recent Remote Control session. If there is none, it runs `claude --resume <id> --fork-session --remote-control`, which continues the latest conversation as a new copy and leaves the original VS Code tab unchanged.
+- The session opens in a new console window, and the PC is kept awake while it runs. The result is shown as a notification and also sent to Discord if Discord notifications are on.
+- Repeated packets within one minute, or while a Remote Control session started by the HUD is still running, are ignored.
+- Allow the port in Windows Firewall. To send the packet over the internet, forward the UDP port to this PC on your router.
+- Anyone who can send packets to the port can start a session on your PC. The session is visible only in your own Claude account, but a SecureOn password is recommended.
+- Requires the `claude` CLI and a Claude subscription that includes Remote Control. Launch details are written to `%LOCALAPPDATA%\AgentHud\remote-control.log`.
 
 ## OpenCode on Windows
 

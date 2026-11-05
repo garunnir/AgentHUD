@@ -70,8 +70,8 @@ public sealed class AutoResumer
             ? ["--resume", id, "-p", "--permission-mode", "acceptEdits"]
             : ["exec", "resume", "--skip-git-repo-check", "-c", "sandbox_mode=workspace-write", id, "-"];
         var executable = session.AgentType == AgentType.ClaudeCode
-            ? FindOnPath("claude") ?? NewestExtensionBinary("anthropic.claude-code-*", Path.Combine("resources", "native-binary", "claude.exe"))
-            : FindOnPath("codex") ?? NewestExtensionBinary("openai.chatgpt-*", Path.Combine("bin", "windows-x86_64", "codex.exe"));
+            ? FindClaude(_home)
+            : FindOnPath("codex") ?? NewestExtensionBinary(_home, "openai.chatgpt-*", Path.Combine("bin", "windows-x86_64", "codex.exe"));
         if (executable is null) return null;
         var info = new ProcessStartInfo
         {
@@ -79,9 +79,7 @@ public sealed class AutoResumer
             // 출력은 대화 기록에 남으므로 받지 않음. 파이프를 물고 있으면 HUD 종료 시 재개 작업이 깨질 수 있음
             RedirectStandardInput = true, StandardInputEncoding = new UTF8Encoding(false)
         };
-        // npm 설치본은 .cmd 셸 스크립트라 cmd.exe로 실행
-        if (executable.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)) { info.FileName = "cmd.exe"; info.ArgumentList.Add("/c"); info.ArgumentList.Add(executable); }
-        else info.FileName = executable;
+        SetExecutable(info, executable);
         foreach (var arg in args) info.ArgumentList.Add(arg);
         return info;
     }
@@ -114,6 +112,15 @@ public sealed class AutoResumer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
+    internal static string? FindClaude(string home) => FindOnPath("claude") ?? NewestExtensionBinary(home, "anthropic.claude-code-*", Path.Combine("resources", "native-binary", "claude.exe"));
+
+    // npm 설치본은 .cmd 셸 스크립트라 cmd.exe로 실행
+    internal static void SetExecutable(ProcessStartInfo info, string executable)
+    {
+        if (executable.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)) { info.FileName = "cmd.exe"; info.ArgumentList.Add("/c"); info.ArgumentList.Add(executable); }
+        else info.FileName = executable;
+    }
+
     private static string? FindOnPath(string name)
     {
         foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
@@ -132,9 +139,9 @@ public sealed class AutoResumer
     }
 
     // PATH에 없으면 VS Code 확장에 들어 있는 CLI를 사용
-    private string? NewestExtensionBinary(string pattern, string relative)
+    private static string? NewestExtensionBinary(string home, string pattern, string relative)
     {
-        var root = Path.Combine(_home, ".vscode", "extensions");
+        var root = Path.Combine(home, ".vscode", "extensions");
         if (!Directory.Exists(root)) return null;
         return Directory.EnumerateDirectories(root, pattern)
             .Select(directory => Path.Combine(directory, relative))

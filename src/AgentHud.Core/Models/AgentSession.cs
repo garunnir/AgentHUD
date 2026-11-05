@@ -34,6 +34,11 @@ public sealed record AgentSession
     // Claude: 최근 5시간 토큰(입력+출력+캐시 생성). 캐시 읽기는 제외
     public long Tokens5h { get; init; }
     public long TokensWeek { get; init; }
+    // Claude Code oauthAccount.organizationUuid — 복수 계정 사용량 매칭용(비밀 아님)
+    public string? AccountOrgId { get; init; }
+    public string? AccountEmail { get; init; }
+    // Claude: 세션이 속한 설정 루트(~/.claude 또는 CLAUDE_CONFIG_DIR) - 루트별 statusLine 한도 매칭용
+    public string? ClaudeConfigDir { get; init; }
     // Codex: token_count.rate_limits의 5시간(primary)·주간(secondary) 창
     public LimitWindow? PrimaryLimit { get; init; }
     public LimitWindow? SecondaryLimit { get; init; }

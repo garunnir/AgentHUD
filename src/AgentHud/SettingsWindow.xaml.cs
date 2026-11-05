@@ -30,6 +30,11 @@ public partial class SettingsWindow : Window
         try { await main.RefreshClaudeAsync(); } finally { button.IsEnabled = true; }
     }
     private void ClaudeLogout_OnClick(object sender, RoutedEventArgs e) { if (DataContext is MainWindow main) main.LogoutClaude(); }
+    private void ClaudeRemoveAccount_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindow main || sender is not FrameworkElement { Tag: string orgId } || string.IsNullOrWhiteSpace(orgId)) return;
+        main.RemoveClaudeAccount(orgId);
+    }
     private void DiscordSave_OnClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainWindow main) return;
