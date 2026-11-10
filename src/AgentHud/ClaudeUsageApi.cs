@@ -25,7 +25,7 @@ public sealed class ClaudeUsageApi : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _lock = new();
     private readonly List<StoredAccount> _accounts = [];
-    private readonly Dictionary<string, (LimitWindow? FiveHour, LimitWindow? SevenDay, DateTime At)> _latest = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ClaudeLimitSnapshot> _latest = new(StringComparer.OrdinalIgnoreCase);
     private int _credentialsVersion;
     // 언어가 바뀌어도 다시 그릴 수 있게 테이블 키와 인자로 보관
     private (string Key, object?[] Args) _status = ("Api.NotConfigured", []);
@@ -88,9 +88,7 @@ public sealed class ClaudeUsageApi : IDisposable
         if (string.IsNullOrWhiteSpace(orgId)) return ClaudeLimitSnapshot.None;
         lock (_lock)
         {
-            if (!_latest.TryGetValue(orgId, out var latest) || (latest.FiveHour is null && latest.SevenDay is null))
-                return ClaudeLimitSnapshot.None;
-            return new(ClaudeLimitSource.UsageApi, latest.FiveHour, latest.SevenDay, latest.At);
+            return _latest.TryGetValue(orgId, out var latest) && latest.HasData ? latest : ClaudeLimitSnapshot.None;
         }
     }
 
@@ -198,14 +196,14 @@ public sealed class ClaudeUsageApi : IDisposable
             foreach (var account in accounts)
             {
                 if (!IsCurrent()) return;
-                var (five, seven, errorKey, errorArgs) = await FetchUsageAsync(account, _stop.Token);
+                var (snapshot, errorKey, errorArgs) = await FetchUsageAsync(account, _stop.Token);
                 if (!IsCurrent()) return;
-                if (five is null && seven is null)
+                if (snapshot is null)
                 {
                     lastErrorKey = errorKey; lastErrorArgs = errorArgs;
                     continue;
                 }
-                lock (_lock) _latest[account.OrgId] = (five, seven, DateTime.UtcNow);
+                lock (_lock) _latest[account.OrgId] = snapshot;
                 ok++;
             }
             if (!IsCurrent()) return;
@@ -230,14 +228,14 @@ public sealed class ClaudeUsageApi : IDisposable
         }
     }
 
-    private async Task<(LimitWindow? Five, LimitWindow? Seven, string? ErrorKey, object?[] ErrorArgs)> FetchUsageAsync(StoredAccount account, CancellationToken token)
+    private async Task<(ClaudeLimitSnapshot? Snapshot, string? ErrorKey, object?[] ErrorArgs)> FetchUsageAsync(StoredAccount account, CancellationToken token)
     {
         var orgId = account.OrgId;
         if (!Guid.TryParse(orgId, out var org))
         {
             var resolved = await ResolveOrgIdAsync(account.SessionKey, token);
             if (resolved is null || !Guid.TryParse(resolved, out org))
-                return (null, null, "Api.OrgIdRequired", []);
+                return (null, "Api.OrgIdRequired", []);
             orgId = resolved;
             lock (_lock)
             {
@@ -255,17 +253,15 @@ public sealed class ClaudeUsageApi : IDisposable
         if (code != 200)
         {
             var (blocked, reason) = ErrorReason(body);
-            if (blocked) return (null, null, "Api.Blocked", []);
-            if (code is 401 or 403) return (null, null, "Api.AuthFailed", [code, reason]);
-            if (code < 0) return (null, null, "Api.ConnectFailed", []);
-            return (null, null, "Api.RequestFailed", [code, reason]);
+            if (blocked) return (null, "Api.Blocked", []);
+            if (code is 401 or 403) return (null, "Api.AuthFailed", [code, reason]);
+            if (code < 0) return (null, "Api.ConnectFailed", []);
+            return (null, "Api.RequestFailed", [code, reason]);
         }
-        if (WebViewFetcher.LooksLikeChallenge(body)) return (null, null, "Api.Blocked", []);
-        using var json = JsonDocument.Parse(body);
-        var five = Window(json.RootElement, "five_hour");
-        var seven = Window(json.RootElement, "seven_day");
-        if (five is null && seven is null) return (null, null, "Api.NoLimits", []);
-        return (five, seven, null, []);
+        if (WebViewFetcher.LooksLikeChallenge(body)) return (null, "Api.Blocked", []);
+        using (JsonDocument.Parse(body)) { } // 깨진 JSON은 기존처럼 JsonException으로 상태에 표시
+        var snapshot = ClaudeLimitSnapshot.ParseUsageApi(body, DateTime.UtcNow);
+        return snapshot.HasData ? (snapshot, null, []) : (null, "Api.NoLimits", []);
     }
 
     private async Task<string?> ResolveOrgIdAsync(string key, CancellationToken token)
@@ -350,14 +346,6 @@ public sealed class ClaudeUsageApi : IDisposable
         }
         catch (JsonException) { return (false, ""); }
     }
-
-    // resets_at이 null이면 진행 중인 창이 없다는 뜻이므로 사용률만 쓰고 리셋 시각은 알 수 없음
-    private static LimitWindow? Window(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var w) && w.ValueKind == JsonValueKind.Object
-        && w.TryGetProperty("utilization", out var used) && used.ValueKind == JsonValueKind.Number
-            ? new LimitWindow(used.GetDouble(), w.TryGetProperty("resets_at", out var at) && at.ValueKind == JsonValueKind.String
-                && DateTime.TryParse(at.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
-                ? parsed.ToUniversalTime() : DateTime.MaxValue) : null;
 
     public void Dispose() { _stop.Cancel(); _web.Dispose(); }
 

@@ -902,6 +902,23 @@ finally { if (Directory.Exists(cursorAppData)) Directory.Delete(cursorAppData, t
     var apiFreshWithActivity = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, ApiAt(now.AddMinutes(-5)), now, now.AddSeconds(-1));
     Assert(!apiFreshWithActivity.FiveHourStale, "The activity rule only applies to statusLine, not the API source");
 
+    var apiJson = "{\"five_hour\":{\"utilization\":12,\"resets_at\":\"2026-10-18T14:00:00+00:00\"},\"seven_day\":{\"utilization\":30,\"resets_at\":\"2026-10-21T12:00:00+00:00\"}," +
+        "\"seven_day_opus\":null,\"seven_day_fable\":{\"utilization\":55,\"resets_at\":\"2026-10-21T12:00:00+00:00\"}}";
+    var apiParsed = AgentHud.ClaudeLimitSnapshot.ParseUsageApi(apiJson, now);
+    Assert(apiParsed.Source == AgentHud.ClaudeLimitSource.UsageApi && apiParsed.FiveHour is { UsedPercent: 12 } && apiParsed.SevenDay is { UsedPercent: 30 }
+        && apiParsed.Fable is { UsedPercent: 55 } && apiParsed.Fable.ResetsAt == new DateTime(2026, 10, 21, 12, 0, 0, DateTimeKind.Utc), "ParseUsageApi reads five_hour, seven_day and seven_day_fable");
+    var apiNoFable = AgentHud.ClaudeLimitSnapshot.ParseUsageApi("{\"five_hour\":{\"utilization\":12,\"resets_at\":null},\"seven_day\":null,\"seven_day_fable\":null}", now);
+    Assert(apiNoFable.FiveHour is { UsedPercent: 12 } && apiNoFable.FiveHour.ResetsAt == DateTime.MaxValue && apiNoFable.Fable is null, "ParseUsageApi leaves Fable null when the window is absent or null");
+    Assert(AgentHud.ClaudeLimitSnapshot.ParseUsageApi("{\"seven_day_fable_5\":{\"utilization\":7,\"resets_at\":null},\"seven_day\":{\"utilization\":1,\"resets_at\":null}}", now).Fable is { UsedPercent: 7 },
+        "ParseUsageApi matches a versioned seven_day_*fable* key");
+    Assert(AgentHud.ClaudeLimitSnapshot.ParseUsageApi("{\"seven_day_fable\":{\"utilization\":7}}", now) == AgentHud.ClaudeLimitSnapshot.None, "ParseUsageApi needs the account-wide windows");
+    var fableFromApi = ClaudeLimitPolicy.Pick(StatusLineAt(now), apiParsed with { UpdatedAt = now.AddMinutes(-5) }, now, null);
+    Assert(fableFromApi.Source == AgentHud.ClaudeLimitSource.StatusLine && fableFromApi.Fable is { UsedPercent: 55 } && !fableFromApi.FableStale,
+        "Fable window comes from a fresh API snapshot even when the statusLine wins the main windows");
+    var fableApiStale = ClaudeLimitPolicy.Pick(StatusLineAt(now), apiParsed with { UpdatedAt = now.AddHours(-1) }, now, null);
+    Assert(fableApiStale.Fable is null, "A stale API snapshot does not supply the Fable window next to a fresh statusLine");
+    Assert(ClaudeLimitPolicy.Pick(StatusLineAt(now), AgentHud.ClaudeLimitSnapshot.None, now, null).Fable is null, "No Fable row without a Fable window");
+
     var neither = ClaudeLimitPolicy.Pick(AgentHud.ClaudeLimitSnapshot.None, AgentHud.ClaudeLimitSnapshot.None, now, null);
     Assert(neither.Source == AgentHud.ClaudeLimitSource.None && neither.FiveHour is null && neither.SevenDay is null,
         "No data from either source falls back to None so the caller can use the token-budget estimate");

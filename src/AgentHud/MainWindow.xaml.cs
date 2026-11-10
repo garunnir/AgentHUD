@@ -543,6 +543,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var sameOrgTokens = claude.Where(x => orgId is null || string.Equals(x.AccountOrgId, orgId, StringComparison.OrdinalIgnoreCase)).ToArray();
             rows.Add(ClaudeLimitRow("5h", pick.FiveHour, pick.FiveHourStale, pick.UpdatedAt, sameOrgTokens.Sum(x => x.Tokens5h), _claudeBudget5h, now));
             rows.Add(ClaudeLimitRow(UsageRow.Week, pick.SevenDay, pick.SevenDayStale, pick.UpdatedAt, sameOrgTokens.Sum(x => x.TokensWeek), _claudeBudgetWeek, now));
+            // Fable 주간 한도는 응답에 있을 때만 한 줄 더(토큰 추정치로 대신하지 않음)
+            if (pick.Fable is { } fable) rows.Add(ClaudeLimitRow(UsageRow.Fable, fable, pick.FableStale, pick.UpdatedAt, 0, 0, now));
         }
         else ClaudeDetectedAccount = "";
         // 한도는 계정 단위라 가장 최근 활동한 세션의 값을 사용
@@ -764,6 +766,7 @@ public sealed record UsageRow(AgentType AgentType, string Label, double? UsedPer
     public const string Auto = "auto";
     public const string Api = "api";
     public const string Plan = "plan";
+    public const string Fable = "Fable";
     public string DisplayLabel => Label switch
     {
         Week => Loc.T("Usage.Week"), Month => Loc.T("Usage.Month"), Auto => Loc.T("Usage.Auto"), Api => Loc.T("Usage.Api"), Plan => Loc.T("Usage.Plan"), _ => Label
