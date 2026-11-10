@@ -47,7 +47,11 @@ internal sealed class ClaudeLoginWindow : Window
             var sessionKey = cookies.FirstOrDefault(c => c.Name.Equals("sessionKey", StringComparison.OrdinalIgnoreCase))?.Value;
             if (string.IsNullOrWhiteSpace(sessionKey)) throw new InvalidOperationException("No sessionKey");
             var orgId = cookies.FirstOrDefault(c => c.Name.Equals("lastActiveOrg", StringComparison.OrdinalIgnoreCase))?.Value;
-            var (resolvedOrg, email, name) = await FetchAccountAsync(orgId);
+            // 이메일/이름은 표시용 부가 정보 - 조회가 실패해도 쿠키의 org로 저장은 진행
+            (string? OrgId, string? Email, string? Name) info = default;
+            try { info = await FetchAccountAsync(orgId); }
+            catch (Exception e3) when (e3 is JsonException or InvalidOperationException or System.Runtime.InteropServices.COMException or KeyNotFoundException) { }
+            var (resolvedOrg, email, name) = info;
             if (_closed) return;
             orgId = resolvedOrg ?? orgId;
             if (!Guid.TryParse(orgId, out _)) throw new InvalidOperationException("No organization");
@@ -60,9 +64,13 @@ internal sealed class ClaudeLoginWindow : Window
     // Cookie jar already has the session; same-origin fetch picks the active org + display fields without DevTools copy-paste.
     private async Task<(string? OrgId, string? Email, string? Name)> FetchAccountAsync(string? preferredOrg)
     {
-        var raw = await _web.CoreWebView2.ExecuteScriptAsync(
-            "(async()=>{try{const [o,a]=await Promise.all([fetch('/api/organizations',{credentials:'include'}),fetch('/api/account',{credentials:'include'}).catch(()=>null)]);const orgs=o.ok?await o.text():'';const acc=a&&a.ok?await a.text():'';return JSON.stringify({orgs,acc})}catch{return ''}})()");
-        var wrapped = JsonSerializer.Deserialize<string>(raw) ?? "";
+        // ExecuteScriptAsync는 Promise를 기다리지 않고 "{}"를 돌려주므로 CDP Runtime.evaluate(awaitPromise)로 실행
+        const string script = "(async()=>{try{const [o,a]=await Promise.all([fetch('/api/organizations',{credentials:'include'}),fetch('/api/account',{credentials:'include'}).catch(()=>null)]);const orgs=o.ok?await o.text():'';const acc=a&&a.ok?await a.text():'';return JSON.stringify({orgs,acc})}catch{return ''}})()";
+        var raw = await _web.CoreWebView2.CallDevToolsProtocolMethodAsync("Runtime.evaluate",
+            JsonSerializer.Serialize(new { expression = script, awaitPromise = true, returnByValue = true }));
+        using var result = JsonDocument.Parse(raw);
+        var wrapped = result.RootElement.TryGetProperty("result", out var r) && r.TryGetProperty("value", out var v)
+            && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
         if (string.IsNullOrWhiteSpace(wrapped)) return (null, null, null);
         using var outer = JsonDocument.Parse(wrapped);
         string? orgId = null, email = null, name = null;
