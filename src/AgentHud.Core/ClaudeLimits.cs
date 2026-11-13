@@ -44,7 +44,7 @@ public sealed record ClaudeLimitSnapshot(ClaudeLimitSource Source, LimitWindow? 
             var five = ApiWindow(root, "five_hour");
             var seven = ApiWindow(root, "seven_day");
             if (five is null && seven is null) return None;
-            return new(ClaudeLimitSource.UsageApi, five, seven, updatedAtUtc) { Fable = FableName(root) is { } name ? ApiWindow(root, name) : null };
+            return new(ClaudeLimitSource.UsageApi, five, seven, updatedAtUtc) { Fable = FableWindow(root) };
         }
         catch (JsonException) { return None; }
     }
@@ -54,6 +54,32 @@ public sealed record ClaudeLimitSnapshot(ClaudeLimitSource Source, LimitWindow? 
         if (obj.TryGetProperty("seven_day_fable", out _)) return "seven_day_fable";
         foreach (var p in obj.EnumerateObject())
             if (p.Name.StartsWith("seven_day_", StringComparison.OrdinalIgnoreCase) && p.Name.Contains("fable", StringComparison.OrdinalIgnoreCase)) return p.Name;
+        return null;
+    }
+
+    private static LimitWindow? FableWindow(JsonElement root)
+    {
+        // Claude Code 2.1.212는 Fable을 seven_day_overage_included로 부른다.
+        // https://github.com/d-mato/claude-usage-bar/issues/2 (limits의 weekly_scoped 형식도 기록됨)
+        foreach (var p in root.EnumerateObject())
+            if (p.Name.StartsWith("seven_day_", StringComparison.OrdinalIgnoreCase)
+                && p.Name.Contains("fable", StringComparison.OrdinalIgnoreCase) && ApiWindow(root, p.Name) is { } named) return named;
+        if (ApiWindow(root, "seven_day_overage_included") is { } included) return included;
+        if (!root.TryGetProperty("limits", out var limits) || limits.ValueKind != JsonValueKind.Array) return null;
+        foreach (var limit in limits.EnumerateArray())
+        {
+            if (limit.ValueKind != JsonValueKind.Object
+                || !limit.TryGetProperty("kind", out var kind) || kind.ValueKind != JsonValueKind.String || kind.GetString() != "weekly_scoped"
+                || !limit.TryGetProperty("scope", out var scope) || scope.ValueKind != JsonValueKind.Object
+                || !scope.TryGetProperty("model", out var model) || model.ValueKind != JsonValueKind.Object
+                || !model.TryGetProperty("display_name", out var name) || name.ValueKind != JsonValueKind.String
+                || name.GetString()?.Contains("fable", StringComparison.OrdinalIgnoreCase) != true
+                || !limit.TryGetProperty("percent", out var percent) || percent.ValueKind != JsonValueKind.Number) continue;
+            var reset = limit.TryGetProperty("resets_at", out var at) && at.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(at.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed.ToUniversalTime() : DateTime.MaxValue;
+            return new(percent.GetDouble(), reset);
+        }
         return null;
     }
 

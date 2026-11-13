@@ -908,6 +908,18 @@ finally { if (Directory.Exists(cursorAppData)) Directory.Delete(cursorAppData, t
     Assert(apiParsed.Source == AgentHud.ClaudeLimitSource.UsageApi && apiParsed.FiveHour is { UsedPercent: 12 } && apiParsed.SevenDay is { UsedPercent: 30 }
         && apiParsed.Fable is { UsedPercent: 55 } && apiParsed.Fable.ResetsAt == new DateTime(2026, 10, 21, 12, 0, 0, DateTimeKind.Utc), "ParseUsageApi reads five_hour, seven_day and seven_day_fable");
     var apiNoFable = AgentHud.ClaudeLimitSnapshot.ParseUsageApi("{\"five_hour\":{\"utilization\":12,\"resets_at\":null},\"seven_day\":null,\"seven_day_fable\":null}", now);
+    var includedFable = AgentHud.ClaudeLimitSnapshot.ParseUsageApi(apiJson.Replace("seven_day_fable", "seven_day_overage_included"), now);
+    Assert(includedFable.Fable is { UsedPercent: 55 } && includedFable.Fable.ResetsAt == apiParsed.Fable!.ResetsAt,
+        "Fable recognizes the seven_day_overage_included bucket");
+    var versionedFable = AgentHud.ClaudeLimitSnapshot.ParseUsageApi(apiJson.Replace("\"seven_day_fable\":", "\"seven_day_fable\":null,\"seven_day_fable_5\":"), now);
+    Assert(versionedFable.Fable is { UsedPercent: 55 }, "A null legacy Fable bucket does not hide a populated versioned bucket");
+    var scopedFable = AgentHud.ClaudeLimitSnapshot.ParseUsageApi("""
+        {"five_hour":{"utilization":12},"seven_day_fable":null,"limits":[
+          null,{"kind":1},{"kind":"weekly_scoped","percent":99,"scope":{"model":{"display_name":"Opus"}}},
+          {"kind":"weekly_scoped","percent":65,"resets_at":"2026-10-21T12:00:00Z","scope":{"model":{"display_name":"Fable 5"}}}]}
+        """, now);
+    Assert(scopedFable.Fable is { UsedPercent: 65 } && scopedFable.Fable.ResetsAt == apiParsed.Fable!.ResetsAt,
+        "Fable reads scoped weekly limits and skips unrelated or malformed entries");
     Assert(apiNoFable.FiveHour is { UsedPercent: 12 } && apiNoFable.FiveHour.ResetsAt == DateTime.MaxValue && apiNoFable.Fable is null, "ParseUsageApi leaves Fable null when the window is absent or null");
     Assert(AgentHud.ClaudeLimitSnapshot.ParseUsageApi("{\"seven_day_fable_5\":{\"utilization\":7,\"resets_at\":null},\"seven_day\":{\"utilization\":1,\"resets_at\":null}}", now).Fable is { UsedPercent: 7 },
         "ParseUsageApi matches a versioned seven_day_*fable* key");
