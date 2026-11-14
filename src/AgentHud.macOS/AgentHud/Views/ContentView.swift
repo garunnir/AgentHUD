@@ -267,6 +267,7 @@ struct HeaderButton: View {
 struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
     @State private var showOpenCodeLogin = false
+    @State private var discordURL = ""
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
     /// Doubles, not Ints: the picker's tags must match the Double binding, otherwise
@@ -338,6 +339,41 @@ struct SettingsPopover: View {
                     .toggleStyle(.checkbox)
                     .padding(.leading, 16)
                     .disabled(!viewModel.notifyLimitReset)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(isOn: $viewModel.discordEnabled) {
+                        Text(Localiz.current.string("Settings.DiscordEnable")).font(.system(size: 12))
+                    }
+                    .toggleStyle(.checkbox)
+                    Group {
+                        Toggle(isOn: $viewModel.discordNotifyAsk) {
+                            Text(Localiz.current.string("Settings.DiscordAsk")).font(.system(size: 12))
+                        }
+                        .toggleStyle(.checkbox)
+                        Toggle(isOn: $viewModel.discordNotifyComplete) {
+                            Text(Localiz.current.string("Settings.DiscordComplete")).font(.system(size: 12))
+                        }
+                        .toggleStyle(.checkbox)
+                        HStack(spacing: 6) {
+                            SecureField(Localiz.current.string("Settings.DiscordWebhook"), text: $discordURL)
+                                .textFieldStyle(.roundedBorder)
+                            Button(Localiz.current.string("Settings.Save")) {
+                                viewModel.setDiscordWebhook(discordURL)
+                                let trimmed = discordURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmed.isEmpty || DiscordNotifier.isValidWebhookURL(trimmed) { discordURL = "" }
+                            }
+                            Button(Localiz.current.string("Settings.DiscordTest")) { viewModel.testDiscord() }
+                        }
+                        if !viewModel.discordStatus.isEmpty {
+                            Text(viewModel.discordStatus).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Text(Localiz.current.string("Settings.DiscordHint"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, 16)
+                    .disabled(!viewModel.discordEnabled)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle(isOn: $viewModel.autoResume) {
