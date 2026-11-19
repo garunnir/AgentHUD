@@ -136,6 +136,17 @@ final class SessionListPolicyTests: XCTestCase {
         row = SessionListPolicy.rows([child, parent], now: now)[0]
         XCTAssertFalse(row.hasRunningDescendants); XCTAssertEqual(row.statusName, "Completed")
     }
+    func testUnreadCompletionExpiresWithActivityWindow() {
+        func unread(_ id: String, age: TimeInterval) -> AgentSession {
+            var s = session(id, age: age); s.state = .completed; s.hasUnreadCompletion = true
+            s.completionRevision = id; s.completionDetectedAt = now; return s
+        }
+        var waiting = unread("waiting", age: 7200); waiting.needsInput = true
+        var native = unread("native", age: 0); native.nativeThreadID = "thread"; native.nativeActivityAt = now.addingTimeInterval(-7200)
+        let ids = SessionListPolicy.rows([unread("fresh", age: 3599), unread("old", age: 3601), waiting, native], now: now).map(\.id)
+        XCTAssertEqual(Set(ids), ["fresh", "waiting"])
+        XCTAssertEqual(SessionListPolicy.rows([unread("old", age: 3601)], now: now, activeWindow: 7200).map(\.id), ["old"])
+    }
     func testUnknownParentSelfCycleAndCrossAgentAreNotRoots() {
         var orphan = session("orphan"); orphan.isSubagent = true
         var cross = session("cross", parent: "root"); cross = AgentSessionCopy.withAmp(cross)

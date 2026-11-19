@@ -52,17 +52,24 @@ enum SessionListPolicy {
             guard let date else { return false }; let age = now.timeIntervalSince(date)
             return age >= 0 && age <= activeWindow
         }
+        // An unread completion is kept on disk until acknowledged, but only keeps its row
+        // listed while the conversation itself is within the activity window.
+        func attention(_ s: AgentSession) -> Bool {
+            if s.sourceUnread == true || s.needsInput
+                || [.working, .thinking, .starting, .waitingForInput, .waitingForApproval].contains(s.displayState) { return true }
+            return s.hasUnreadCompletion && recent(s.hasStableLocalIdentity ? s.lastActivityAt : s.nativeActivityAt ?? s.completionDetectedAt)
+        }
         let runningRoots = Set(available.filter { $0.isChildSession && isRunning($0) }.compactMap(rootID))
         let roots = available.filter { s in
             guard !s.isChildSession, !hidden.contains(s.id) else { return false }
             let isRecent = !s.hasStableLocalIdentity
                 ? recent(s.nativeActivityAt) || (s.agentType == .amp && recent(s.lastViewedAt))
                 : recent(s.lastActivityAt) || (s.claudeDesktopID != nil && recent(s.lastViewedAt))
-            return runningRoots.contains(s.id) || needsAttention(s) || isRecent || (s.rateLimitResetAt.map { $0 > now } ?? false)
+            return runningRoots.contains(s.id) || attention(s) || isRecent || (s.rateLimitResetAt.map { $0 > now } ?? false)
         }
         return roots.enumerated().sorted {
-            let l = needsAttention($0.element) || runningRoots.contains($0.element.id)
-            let r = needsAttention($1.element) || runningRoots.contains($1.element.id)
+            let l = attention($0.element) || runningRoots.contains($0.element.id)
+            let r = attention($1.element) || runningRoots.contains($1.element.id)
             return l == r ? $0.offset < $1.offset : l
         }.map { SessionListRow(session: $0.element, hasRunningDescendants: runningRoots.contains($0.element.id)) }
     }
