@@ -40,4 +40,26 @@ final class OpenCodeDiscoveryTests: XCTestCase {
         XCTAssertTrue(SessionListPolicy.rows(running)[0].hasRunningDescendants)
 
     }
+    func testActivityComesFromLatestMessageNotSessionTouch() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHud-opencode-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let root = home.appendingPathComponent(".local/share/opencode")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let db = root.appendingPathComponent("opencode.db")
+        func sql(_ statement: String) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+            process.arguments = [db.path, statement]
+            try process.run(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1000), old = now - 3 * 86_400_000
+        try sql("CREATE TABLE session_v2 (id TEXT, parent_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER, model TEXT, cost REAL, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, time_archived INTEGER);" +
+            "CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);" +
+            "INSERT INTO session_v2 (id,directory,title,time_created,time_updated) VALUES ('ses_Touched','/fixture','Old',\(old),\(now)), ('ses_Talking','/fixture','New',\(old),\(now)), ('ses_Empty','/fixture','Empty',\(now),\(now)), ('ses_EmptyOld','/fixture','EmptyOld',\(old),\(now));" +
+            "INSERT INTO session_message (id,session_id,time_created,time_updated) VALUES ('m1','ses_Touched',\(old),\(old)), ('m2','ses_Talking',\(old),\(old)), ('m3','ses_Talking',\(now),\(now));")
+        let sessions = try await OpenCodeProvider(home: home.path).discover()
+        XCTAssertEqual(Set(sessions.map(\.id)), ["opencode:ses_Talking", "opencode:ses_Empty"])
+        XCTAssertEqual(Set(SessionListPolicy.rows(sessions).map(\.id)), ["opencode:ses_Talking", "opencode:ses_Empty"])
+    }
 }

@@ -47,7 +47,15 @@ public final class OpenCodeProvider: IAgentProvider {
         let sessions = try JSONDecoder().decode([DatabaseSession].self, from: data)
         let now = Date()
         let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var included = Set(sessions.filter { now.timeIntervalSince1970 - Double($0.time_updated) / 1000 <= activeWindow }.map(\.id))
+        // OpenCode (verified 2026-11) bumps session_v2.time_updated without a new message,
+        // so conversation activity comes from the latest message. Empty sessions use their
+        // creation time; a database without session_message keeps time_updated.
+        let messageTimes = latestMessageTimes(sessions.map(\.id))
+        func activityMs(_ row: DatabaseSession) -> Int64 {
+            guard let messageTimes, ActivityFileStore.validSessionID(row.id, app: .openCode) else { return row.time_updated }
+            return messageTimes[row.id] ?? row.time_created
+        }
+        var included = Set(sessions.filter { now.timeIntervalSince1970 - Double(activityMs($0)) / 1000 <= activeWindow }.map(\.id))
         included.formUnion(retainedParentIDs().filter { $0.hasPrefix("opencode:") }.map { String($0.dropFirst(9)) })
         var pending = Array(included)
         while let id = pending.popLast() {
@@ -58,10 +66,10 @@ public final class OpenCodeProvider: IAgentProvider {
 
             guard !row.directory.isEmpty else { return nil }
             let created = Date(timeIntervalSince1970: TimeInterval(row.time_created) / 1000)
-            let updated = Date(timeIntervalSince1970: TimeInterval(row.time_updated) / 1000)
+            let updated = Date(timeIntervalSince1970: TimeInterval(activityMs(row)) / 1000)
             let active = now.timeIntervalSince(updated) <= activeWindow
             // The HUD lists current conversations, not the entire historical DB.
-            // A session becomes visible again as soon as OpenCode updates it.
+            // A session becomes visible again as soon as it gets a new message.
             guard included.contains(row.id) else { return nil }
             let state: AgentState = .unknown // Archival is not evidence of execution or completion.
             var session = AgentSession(
@@ -82,23 +90,38 @@ public final class OpenCodeProvider: IAgentProvider {
         }
     }
 
+    private struct MessageTime: Decodable { let session_id: String; let time: Int64? }
+
+    /// nil when the message table cannot be read (older schema); missing keys mean no messages.
+    private func latestMessageTimes(_ ids: [String]) -> [String: Int64]? {
+        let valid = ids.filter { ActivityFileStore.validSessionID($0, app: .openCode) }
+        guard !valid.isEmpty else { return [:] }
+        let list = valid.map { "'\($0)'" }.joined(separator: ",")
+        guard let data = try? runSQLite("SELECT session_id, MAX(time_updated) AS time FROM session_message " +
+                                        "WHERE session_id IN (\(list)) GROUP BY session_id;") else { return nil }
+        guard !data.isEmpty else { return [:] }
+        guard let rows = try? JSONDecoder().decode([MessageTime].self, from: data) else { return nil }
+        return Dictionary(rows.compactMap { row in row.time.map { (row.session_id, $0) } }, uniquingKeysWith: max)
+    }
+
     private func runSQLite() throws -> Data {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         let retained = retainedParentIDs().filter { $0.hasPrefix("opencode:") }.map { String($0.dropFirst(9)) }
             .filter { ActivityFileStore.validSessionID($0, app: .openCode) }.prefix(100)
         let ids = retained.isEmpty ? "NULL" : retained.map { "'\($0)'" }.joined(separator: ",")
-        process.arguments = [
-
-            "-readonly", "-json", databasePath,
+        return try runSQLite(
             "WITH RECURSIVE roots(id) AS (SELECT id FROM (SELECT id FROM session_v2 ORDER BY time_updated DESC LIMIT 100) " +
             "UNION SELECT id FROM session_v2 WHERE id IN (\(ids))), family(id) AS (SELECT id FROM roots UNION " +
             "SELECT s.parent_id FROM session_v2 s JOIN family f ON s.id=f.id WHERE s.parent_id IS NOT NULL) " +
             "SELECT id, parent_id, directory, title, time_created, time_updated, model, cost, " +
             "tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, " +
             "tokens_cache_write, time_archived FROM session_v2 " +
-            "WHERE id IN (SELECT id FROM family LIMIT 300) ORDER BY time_updated DESC;"
-        ]
+            "WHERE id IN (SELECT id FROM family LIMIT 300) ORDER BY time_updated DESC;")
+    }
+
+    private func runSQLite(_ statement: String) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-readonly", "-json", databasePath, statement]
         let output = Pipe()
         let error = Pipe()
         process.standardOutput = output
