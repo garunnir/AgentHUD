@@ -5,7 +5,11 @@ struct AgentIconView: View {
     let type: AgentType
 
     var body: some View {
-        if type == .openCode || type == .openCodeGo {
+        if type == .amp {
+            Text("A").font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(.orange)
+        } else if type == .gemini {
+            Image(systemName: "sparkle").resizable().scaledToFit().foregroundStyle(.blue)
+        } else if type == .openCode || type == .openCodeGo {
             OpenCodeLogoView()
         } else {
             ScaledArtworkShape(path: type == .claudeCode ? AgentArtwork.claude() : AgentArtwork.codex())

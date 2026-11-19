@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import ApplicationServices
 
 @MainActor
 public final class AgentHudViewModel: ObservableObject {
@@ -17,12 +18,11 @@ public final class AgentHudViewModel: ObservableObject {
             let seconds = TimeInterval(activeWindowMinutes * 60)
             codexProvider.setActiveWindow(seconds)
             claudeProvider.setActiveWindow(seconds)
+            claudeDesktopProvider.activeWindow = seconds
             openCodeProvider.setActiveWindow(seconds)
             UserDefaults.standard.set(activeWindowMinutes, forKey: Self.activeWindowKey)
         }
     }
-    // Show waiting states as ? / ! symbols instead of yellow dots (off by default, like Windows).
-    @Published public var showWaitingSymbols = false
     /// Display language code; `Localiz.auto` follows the system language.
     @Published public var uiLanguage: String = Localiz.auto {
         didSet {
@@ -81,7 +81,7 @@ public final class AgentHudViewModel: ObservableObject {
     @Published public var showPaceMarker: Bool = true {
         didSet { UserDefaults.standard.set(showPaceMarker, forKey: Self.paceMarkerKey) }
     }
-    @Published public var conversationTarget: ConversationTarget = .visualStudioCode {
+    @Published public var conversationTarget: ConversationTarget = .automatic {
         didSet { UserDefaults.standard.set(conversationTarget.rawValue, forKey: Self.conversationTargetKey) }
     }
     /// Registers/unregisters the Claude Code statusLine link (default on; see ClaudeLimitLink).
@@ -158,32 +158,48 @@ public final class AgentHudViewModel: ObservableObject {
     private var lastStates: [String: AgentState] = [:]
     private var soundsPrimed = false
 
+    @Published public private(set) var selectedSessionID: String?
+    @Published public private(set) var openingMessage: String?
+    @Published public private(set) var isOpening = false
+    let claudeWebUsage = ClaudeWebKitUsage()
+    let ampWebUsage = BackgroundUsageService<AmpUsagePage>()
+    private var ampUsageObserver: AnyCancellable?
+    private var claudeUsageObserver: AnyCancellable?
+    private let nativeClient = NativeSidebarClient()
+    private lazy var router = ConversationRouter(native: nativeClient)
     private let registry: AgentSessionRegistry
     private let discovery: AgentDiscoveryService
     private let codexProvider: CodexProvider
+    private let claudeDesktopProvider: ClaudeDesktopMetadataProvider
     private let claudeProvider: ClaudeCodeProvider
     private let openCodeProvider: OpenCodeProvider
     private var updateTask: Task<Void, Never>?
 
-    public init() {
-        self.resumer = AutoResumer(logDirectory: Self.dataDirectory)
+    public init(previewMode: Bool = false) {
+        let dataDirectory = previewMode ? FileManager.default.temporaryDirectory.appendingPathComponent("AgentHud-preview-\(UUID())") : Self.dataDirectory
+        self.resumer = AutoResumer(logDirectory: dataDirectory)
         self.notifications = LimitResetNotifications()
-        self.memoStore = MemoStore(url: Self.dataDirectory.appendingPathComponent("memos.json"))
-        let registry = AgentSessionRegistry()
+        self.memoStore = MemoStore(url: dataDirectory.appendingPathComponent("memos.json"))
+        let registry = AgentSessionRegistry(storageURL: previewMode ? nil : dataDirectory.appendingPathComponent("completion-state.json"))
         self.registry = registry
         let home = NSHomeDirectory()
-        let codex = CodexProvider(home: home, activeWindow: TimeInterval(60 * 60))
+        let codex = CodexProvider(home: home, activeWindow: TimeInterval(60 * 60), retainedParentIDs: { registry.getByAgentType(.codex).filter(\.hasUnreadCompletion).compactMap(\.parentSessionId) })
         self.codexProvider = codex
         let claude = ClaudeCodeProvider(home: home, activeWindow: TimeInterval(60 * 60))
         self.claudeProvider = claude
-        let openCode = OpenCodeProvider(home: home, activeWindow: TimeInterval(60 * 60))
+        claudeDesktopProvider = ClaudeDesktopMetadataProvider(home: home, client: nativeClient)
+        let openCode = OpenCodeProvider(home: home, activeWindow: TimeInterval(60 * 60), retainedParentIDs: { registry.getByAgentType(.openCode).filter(\.hasUnreadCompletion).compactMap(\.parentSessionId) })
         self.openCodeProvider = openCode
         let providers: [IAgentProvider] = [
             claude,
             codex,
-            openCode
+            openCode,
+            claudeDesktopProvider,
+            NativeSidebarProvider(app: .amp, client: nativeClient),
+            NativeSidebarProvider(app: .gemini, client: nativeClient),
+            GeminiHistoryProvider(home: home, native: nativeClient)
         ]
-        self.discovery = AgentDiscoveryService(providers: providers, registry: registry)
+        self.discovery = AgentDiscoveryService(providers: providers, registry: registry, activity: LiveActivityOverlay(roots: LiveActivityOverlay.defaultRoots(home: URL(fileURLWithPath: home))))
 
         registry.onChanged = { [weak self] in
             Task { @MainActor in
@@ -191,6 +207,11 @@ public final class AgentHudViewModel: ObservableObject {
                 self.sessionsChanged(self.registry.getAllAgents())
             }
         }
+
+        if previewMode { isPreviewMode = true; return }
+
+        ampUsageObserver = ampWebUsage.$snapshot.dropFirst().sink { [weak self] _ in self?.objectWillChange.send() }
+        claudeUsageObserver = claudeWebUsage.$snapshot.dropFirst().sink { [weak self] _ in self?.objectWillChange.send() }
 
         if let saved = UserDefaults.standard.object(forKey: Self.warningPercentKey) as? Double {
             self.warningPercent = saved
@@ -262,13 +283,18 @@ public final class AgentHudViewModel: ObservableObject {
         for (id, seen) in hiddenSessions {
             guard let session = all.first(where: { $0.id == id }) else { hidden[id] = nil; continue }
             let state = session.displayState
-            hidden[id] = state != seen && Self.needsAttention(state) ? nil : state
+            let unreadArrived = session.sourceUnread == true && sessions.first(where: { $0.id == id })?.sourceUnread != true
+            hidden[id] = unreadArrived || (state != seen && Self.needsAttention(state)) ? nil : state
         }
         if hidden != hiddenSessions { hiddenSessions = hidden }
+        if let selected = selectedSessionID, !all.contains(where: { $0.id == selected }),
+           let nativeID = sessions.first(where: { $0.id == selected })?.nativeThreadID,
+           let merged = all.first(where: { $0.nativeThreadID == nativeID }) { selectedSessionID = merged.id }
         sessions = all
         isScanning = false
         if notifyLimitReset {
-            let candidates = notifyVisibleOnly ? all.filter { hidden[$0.id] == nil } : all
+            let visibleIDs = Set(SessionListPolicy.rows(all, hidden: Set(hidden.keys), activeWindow: TimeInterval(activeWindowMinutes * 60)).map(\.id))
+            let candidates = notifyVisibleOnly ? all.filter { visibleIDs.contains($0.id) } : all
             for session in limitNotifier.takeDue(candidates) { showLimitReset(session) }
         }
     }
@@ -285,7 +311,7 @@ public final class AgentHudViewModel: ObservableObject {
             let previous = lastStates[session.id]
             lastStates[session.id] = state
             // Skip the first scan and old sessions discovered late.
-            if !soundsPrimed || previous == state || session.parentSessionId != nil
+            if !soundsPrimed || previous == state || session.isChildSession
                 || now.timeIntervalSince(session.lastActivityAt) > 60 { continue }
             if state == .completed { complete = true }
             else if state == .waitingForInput || state == .waitingForApproval { ask = true }
@@ -309,7 +335,6 @@ public final class AgentHudViewModel: ObservableObject {
 
     private func openSession(_ id: String) {
         guard let session = registry.findSession(id) else { return }
-        acknowledgeCompletion(id)
         openProject(session)
     }
 
@@ -319,10 +344,16 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     public func start() {
+        if !isPreviewMode {
+            claudeWebUsage.start()
+            ampWebUsage.start()
+        }
         discovery.start()
     }
 
     public func stop() {
+        ampWebUsage.stop()
+        claudeWebUsage.stop()
         discovery.stop()
     }
 
@@ -364,7 +395,7 @@ public final class AgentHudViewModel: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         // Acknowledge a completion so the hidden row does not pop right back.
         hiddenSessions[id] = session.hasUnreadCompletion ? .idle : session.displayState
-        if session.hasUnreadCompletion { registry.acknowledgeCompletion(id) }
+        if session.hasUnreadCompletion { registry.acknowledgeCompletion(id, revision: registry.findSession(id)?.completionRevision) }
     }
 
     public func showHiddenSessions() {
@@ -372,118 +403,33 @@ public final class AgentHudViewModel: ObservableObject {
     }
 
     public func acknowledgeCompletion(_ id: String) {
-        registry.acknowledgeCompletion(id)
+        registry.acknowledgeCompletion(id, revision: registry.findSession(id)?.completionRevision)
     }
 
     public func openProject(_ session: AgentSession) {
-        guard let path = session.worktreePath ?? session.projectPath,
-              FileManager.default.fileExists(atPath: path) else { return }
-        switch conversationTarget {
-        case .visualStudioCode:
-            // Focus the project first, then hand the conversation URI to the extension.
-            openInVSCode(path: path)
-            guard let uri = conversationURI(for: session) else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                if let url = URL(string: uri) { NSWorkspace.shared.open(url) }
+        guard !isOpening else { return }
+        let revision = session.completionRevision
+        isOpening = true; openingMessage = nil
+        Task {
+            defer { isOpening = false }
+            let result = await router.open(session, preference: conversationTarget)
+            registry.recordNavigation(session.id, result: result)
+            if result.acknowledgesCompletion {
+                selectedSessionID = session.id
+                registry.acknowledgeCompletion(session.id, revision: revision)
             }
-        case .chatGPTDesktop:
-            if session.agentType == .codex, let uri = chatGPTConversationURI(for: session) {
-                NSWorkspace.shared.open(URL(string: uri)!)
-            } else {
-                openInDesktopApp(path: path, bundleIdentifiers: ["com.openai.codex"], fallback: "/Applications/ChatGPT.app")
+            switch result {
+            case .failed: openingMessage = Localiz.current.string("Navigation.Failed")
+            case .projectOnly: openingMessage = Localiz.current.string("Navigation.ProjectOnly")
+            case .extensionRequested: openingMessage = Localiz.current.string("Navigation.ExtensionRequested")
+            default: break
             }
-        case .openCodeDesktop:
-            openInDesktopApp(path: path, bundleIdentifiers: ["ai.opencode.desktop"], fallback: "/Applications/OpenCode.app")
-        case .claudeDesktop:
-            openInDesktopApp(path: path, bundleIdentifiers: ["com.anthropic.claudefordesktop"], fallback: "/Applications/Claude.app")
         }
     }
 
-    /// vscode:// URI that opens the conversation tab of the given session.
-    private func conversationURI(for session: AgentSession) -> String? {
-        // There is no confirmed OpenCode VS Code URI scheme yet. Still open the
-        // project in VS Code, but do not send its session ID to the ChatGPT route.
-        if session.agentType == .openCode { return nil }
-        guard let separator = session.id.firstIndex(of: ":") else { return nil }
-        let raw = String(session.id[session.id.index(after: separator)...])
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        guard let escaped = raw.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
-        return session.agentType == .claudeCode
-            ? "vscode://anthropic.claude-code/open?session=\(escaped)"
-            : "vscode://openai.chatgpt/local/\(escaped)"
-    }
-
-    private func chatGPTConversationURI(for session: AgentSession) -> String? {
-        guard let separator = session.id.firstIndex(of: ":") else { return nil }
-        let raw = String(session.id[session.id.index(after: separator)...])
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        guard let escaped = raw.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
-        return "codex://threads/\(escaped)"
-    }
-
-    private func openInDesktopApp(path: String, bundleIdentifiers: [String], fallback: String) {
-        let appURL = bundleIdentifiers
-            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-            .first ?? URL(fileURLWithPath: fallback)
-        guard FileManager.default.fileExists(atPath: appURL.path) else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-            return
-        }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.open([URL(fileURLWithPath: path)],
-                                withApplicationAt: appURL,
-                                configuration: configuration)
-    }
-
-    /// Opens the project in VS Code. The `code` CLI is preferred so an existing window
-    /// for the project is focused; a GUI app has a minimal PATH, so the usual install
-    /// locations are checked before falling back to the app bundle.
-    private func openInVSCode(path: String) {
-        if let cli = locateCodeCLI() {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: cli)
-            process.arguments = [path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            if (try? process.run()) != nil { return }
-        }
-        let bundle = URL(fileURLWithPath: "/Applications/Visual Studio Code.app")
-        if FileManager.default.fileExists(atPath: bundle.path) {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: bundle, configuration: configuration)
-        } else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        }
-    }
-
-    private func locateCodeCLI() -> String? {
-        let candidates = [
-            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-            NSHomeDirectory() + "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-        ]
-        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            return found
-        }
-        // Homebrew cask / manual installs expose `code` somewhere on the user's PATH,
-        // which a GUI app does not inherit, so ask the login shell instead.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", "command -v code"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            return path.isEmpty ? nil : path
-        } catch {
-            return nil
+    public func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -536,6 +482,7 @@ public final class AgentHudViewModel: ObservableObject {
     /// Builds the bottom usage rows, mirroring the Windows UpdateUsage logic:
     /// Codex limits come from the latest session's rate_limits; Claude shows token totals.
     func buildUsageRows(now: Date = Date()) -> [UsageRow] {
+        guard !isPreviewMode else { return [] }
         refreshLiveUsageIfNeeded(now: now)
         if OpenCodeGoUsageApi.shared.hasCookies,
            openCodeGoUsage == nil || now.timeIntervalSince(openCodeGoUsage!.fetchedAt) >= OpenCodeGoUsageApi.refreshInterval {
@@ -544,28 +491,27 @@ public final class AgentHudViewModel: ObservableObject {
         var rows: [UsageRow] = []
         let loc = Localiz.current
 
-        let claude = sessions.filter { $0.agentType == .claudeCode }
-        if !claude.isEmpty {
-            // statusLine (default, official CLI value) vs. the sessionKey API (not ported to
-            // macOS, so always .none) -- see ClaudeLimitPolicy for the selection/staleness rules.
+        let claude = sessions.filter { $0.agentType == .claudeCode && $0.id.hasPrefix("claude:") }
+        let web = claudeWebUsage.snapshot ?? .none
+        if !claude.isEmpty || web.hasData {
             let lastActivity = claude.map(\.lastActivityAt).max()
-            let pick = ClaudeLimitPolicy.pick(statusLine: ClaudeLimitLink.shared.readSnapshot(), api: .none,
+            let local: ClaudeLimitSnapshot = web.hasData ? .none : ClaudeLimitLink.shared.readSnapshot()
+            let pick = ClaudeLimitPolicy.pick(statusLine: local, api: web,
                                               now: now, lastClaudeActivity: lastActivity)
-            let tokens5h = claude.reduce(Int64(0)) { $0 + $1.tokens5h }
             let tokensWeek = claude.reduce(Int64(0)) { $0 + $1.tokensWeek }
-            rows.append(claudeLimitRow(id: "claude-5h", label: "5h", window: pick.fiveHour, stale: pick.fiveHourStale,
-                                       pickUpdatedAt: pick.updatedAt, tokens: tokens5h, now: now))
+            if pick.showsFiveHour(at: now, tokenBudget: claudeBudget5h) {
+                let tokens5h = claude.reduce(Int64(0)) { $0 + $1.tokens5h }
+                rows.append(claudeLimitRow(id: "claude-5h", label: "5h", window: pick.fiveHour, stale: pick.fiveHourStale,
+                                           pickUpdatedAt: pick.updatedAt, source: pick.source, tokens: tokens5h, now: now))
+            }
             rows.append(claudeLimitRow(id: "claude-week", label: "week", window: pick.sevenDay, stale: pick.sevenDayStale,
-                                       pickUpdatedAt: pick.updatedAt, tokens: tokensWeek, now: now))
+                                       pickUpdatedAt: pick.updatedAt, source: pick.source, tokens: tokensWeek, now: now))
         }
 
         // Live server data wins; local logs only fill in when the API is unavailable.
-        let live = liveUsage
-        if live?.primary != nil {
-            rows.append(codexRow(agent: .codex, label: "5h", window: live!.primary!,
-                                 updatedAt: liveUsageFetchedAt, now: now, fromServer: true))
-            if let week = live?.secondary {
-                rows.append(codexRow(agent: .codex, label: "week", window: week,
+        if let live = liveUsage {
+            for (label, window) in CodexUsage.displayWindows(primary: live.primary, secondary: live.secondary) {
+                rows.append(codexRow(agent: .codex, label: label, window: window,
                                      updatedAt: liveUsageFetchedAt, now: now, fromServer: true))
             }
         } else if sessions.contains(where: { $0.agentType == .codex }) {
@@ -573,7 +519,7 @@ public final class AgentHudViewModel: ObservableObject {
             // Picking the most recently *active* session can show stale numbers when
             // that session's last token_count predates another session's.
             let latest = sessions
-                .filter { $0.agentType == .codex && $0.primaryLimit != nil }
+                .filter { $0.agentType == .codex && ($0.primaryLimit != nil || $0.secondaryLimit != nil) }
                 .max { lhs, rhs in
                     switch (lhs.limitsUpdatedAt, rhs.limitsUpdatedAt) {
                     case let (left?, right?): return left < right
@@ -582,11 +528,9 @@ public final class AgentHudViewModel: ObservableObject {
                     default: return lhs.lastActivityAt < rhs.lastActivityAt
                     }
                 }
-            if let latest, let primary = latest.primaryLimit {
-                rows.append(codexRow(agent: .codex, label: "5h", window: primary,
-                                     updatedAt: latest.limitsUpdatedAt, now: now))
-                if let week = latest.secondaryLimit {
-                    rows.append(codexRow(agent: .codex, label: "week", window: week,
+            if let latest {
+                for (label, window) in CodexUsage.displayWindows(primary: latest.primaryLimit, secondary: latest.secondaryLimit) {
+                    rows.append(codexRow(agent: .codex, label: label, window: window,
                                          updatedAt: latest.limitsUpdatedAt, now: now))
                 }
             } else {
@@ -597,7 +541,19 @@ public final class AgentHudViewModel: ObservableObject {
             }
         }
 
+        if let amp = ampWebUsage.snapshot, amp.reset > now {
+            for (label, allowance) in [("Agent", amp.agent), ("Orb", amp.orb)] {
+                let window = LimitWindow(usedPercent: 100 - allowance.value, resetsAt: amp.reset)
+                var row = codexRow(agent: .amp, label: label, window: window, updatedAt: amp.observed,
+                                   now: now, fromServer: now.timeIntervalSince(amp.observed) < 300)
+                row.remainingLabel = allowance.label
+                if allowance.value <= warningPercent && !allowance.indicatesLowBalance(at: warningPercent) { row.warningPercent = 0 }
+                row.pacePercent = nil
+                rows.append(row)
+            }
+        }
         if let go = openCodeGoUsage {
+
             rows.append(codexRow(agent: .openCodeGo, label: "5h", window: go.fiveHour,
                                  updatedAt: go.fetchedAt, now: now, fromServer: true))
             rows.append(codexRow(agent: .openCodeGo, label: "week", window: go.week,
@@ -625,7 +581,7 @@ public final class AgentHudViewModel: ObservableObject {
     /// window shows the last known value marked "Stale" (or, once that window's `resetsAt`
     /// has passed and the number is meaningless, just "Stale"); otherwise a real gauge.
     private func claudeLimitRow(id: String, label: String, window: LimitWindow?, stale: Bool,
-                                 pickUpdatedAt: Date, tokens: Int64, now: Date) -> UsageRow {
+                                 pickUpdatedAt: Date, source: ClaudeLimitSource, tokens: Int64, now: Date) -> UsageRow {
         let loc = Localiz.current
         guard let window else {
             // No real limit: compare against the user's token budget, or show only the total.
@@ -644,11 +600,11 @@ public final class AgentHudViewModel: ObservableObject {
             let expired = window.resetsAt.map { $0 <= now } ?? false
             let text = expired ? loc.string("Usage.Stale")
                 : HudTheme.formatPattern(loc.string("Usage.StaleValue"), [window.usedPercent])
-            let tip = HudTheme.formatPattern(loc.string("Usage.StaleTip"), [pickUpdatedAt])
+            let tip = HudTheme.formatPattern(loc.string(source == .usageApi ? "Usage.ClaudeWebStaleTip" : "Usage.StaleTip"), [pickUpdatedAt])
             return UsageRow(id: id, agent: .claudeCode, label: label, usedPercent: nil,
                             text: text, pacePercent: nil, textToolTip: tip)
         }
-        return codexRow(agent: .claudeCode, label: label, window: window, now: now)
+        return codexRow(agent: .claudeCode, label: label, window: window, updatedAt: pickUpdatedAt, now: now, fromServer: source == .usageApi)
     }
 
     private func codexRow(agent: AgentType, label: String, window: LimitWindow,
@@ -727,5 +683,14 @@ public final class AgentHudViewModel: ObservableObject {
                 primaryLimit: nil, secondaryLimit: nil, limitsUpdatedAt: nil
             )
         ]
+        sessions[0].needsInput = true
+        var completed = sessions[2]
+        completed = AgentSession(id: "codex:preview-4", agentType: .codex, state: .completed,
+            hasUnreadCompletion: true, completionDetectedAt: now, processId: nil, projectPath: "/fixture/AgentHud",
+            worktreePath: nil, sessionTitle: "Result ready to review", currentTask: nil, startedAt: now,
+            lastActivityAt: now, isActive: false, wakeupAt: nil, hasBackgroundTasks: false, parentSessionId: nil,
+            rateLimitResetAt: nil, tokens5h: 0, tokensWeek: 0, primaryLimit: nil, secondaryLimit: nil)
+        sessions.append(completed)
+        selectedSessionID = sessions[0].id
     }
 }

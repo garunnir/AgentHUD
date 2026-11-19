@@ -1,70 +1,31 @@
 import SwiftUI
 
-/// Status indicator matching the Windows app: colored dot (pulsing while working),
-/// green check for unseen completions, and optional ? / ! symbols for waiting states.
+/// A moving ring means live work. All other states use an equally sized, colored dot.
 struct StatusIndicator: View {
+    static let diameter: CGFloat = 10
     let session: AgentSession
-    let showWaitingSymbols: Bool
+    var hasRunningDescendants: Bool = false
 
-    @State private var pulsing = false
+    @State private var spinning = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var state: AgentState { session.displayState }
 
-    private var isPulsingState: Bool {
-        state == .starting || state == .working || state == .thinking
-    }
-
-    private var waitingSymbol: String? {
-        guard showWaitingSymbols else { return nil }
-        switch state {
-        case .waitingForInput: return "?"
-        case .waitingForApproval: return "!"
-        default: return nil
-        }
-    }
-
     var body: some View {
-        ZStack {
-            if state == .completed {
-                CheckmarkShape()
-                    .stroke(HudTheme.stateColor(.completed), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                    .frame(width: 10, height: 9)
-            } else if let symbol = waitingSymbol {
-                Text(symbol)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(HudTheme.stateColor(state))
+        Group {
+            if hasRunningDescendants || SessionListPolicy.isRunning(session) {
+                Circle().trim(from: 0.15, to: 0.9)
+                    .stroke(HudTheme.stateColor(.working), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(spinning && !reduceMotion ? 360 : 0))
+                    .animation(reduceMotion ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false), value: spinning)
+                    .onAppear { spinning = true }
+                    .onDisappear { spinning = false }
             } else {
-                Circle()
-                    .fill(HudTheme.stateColor(state))
-                    .frame(width: 11, height: 11)
-                    .opacity(pulsing ? 0.45 : 1)
+                Circle().fill([.unknown, .idle].contains(state) && session.sourceUnread == true ? Color.blue : HudTheme.stateColor(state))
             }
         }
+        .frame(width: Self.diameter, height: Self.diameter)
         .frame(width: 12, height: 18)
         .help(session.statusTip)
-        .onAppear { updatePulse() }
-        .onChange(of: state) { _, _ in updatePulse() }
-    }
-
-    private func updatePulse() {
-        if isPulsingState {
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                pulsing = true
-            }
-        } else {
-            withAnimation(.linear(duration: 0)) {
-                pulsing = false
-            }
-        }
-    }
-}
-
-struct CheckmarkShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: 1, y: 5))
-        path.addLine(to: CGPoint(x: 4, y: 8))
-        path.addLine(to: CGPoint(x: 10, y: 1))
-        return path
     }
 }
