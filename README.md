@@ -186,3 +186,7 @@ No. Session monitoring is local. Optional usage connections send only the reques
 Bug reports and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for building, tests, and contribution rules.
 
 Internal architecture and integration details are in [docs/architecture.md](docs/architecture.md). AI coding agents should start with [AGENTS.md](AGENTS.md).
+
+### macOS desktop-first routing and live activity
+
+The macOS port now supports automatic desktop-first conversation routing, event-backed spinners, pending questions and persistent unread completions. Amp and Gemini desktop sidebars are also supported on macOS: Amp exposes source unread and current-thread execution; Gemini exposes a separate current-window response indicator. Their completion and per-thread status limits are documented. See [setup, evidence and verification limits](docs/macos-desktop-activity.md).

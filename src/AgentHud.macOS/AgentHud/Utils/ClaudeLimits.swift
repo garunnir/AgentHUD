@@ -1,8 +1,6 @@
 import Foundation
 
-/// Swift port of `src/AgentHud.Core/ClaudeLimits.cs` (the reference implementation —
-/// keep both in sync). There is no sessionKey API port on macOS, so `api` is always
-/// `.none` here; the parameter stays so both ports share the same `pick` signature.
+/// Sources for account usage reported by Claude Code or the signed-in Claude usage page.
 public enum ClaudeLimitSource: Sendable {
     case none, statusLine, usageApi
 }
@@ -48,6 +46,12 @@ public struct ClaudeLimitPick: Sendable {
     public let fiveHourStale: Bool
     public let sevenDayStale: Bool
     public let updatedAt: Date
+
+    func showsFiveHour(at now: Date, tokenBudget: Double) -> Bool {
+        if source == .none { return tokenBudget > 0 }
+        guard let fiveHour else { return false }
+        return fiveHour.resetsAt.map { $0 > now } ?? true
+    }
 }
 
 /// Picks the fresher, valid value between the statusLine (default, official CLI value)

@@ -4,11 +4,12 @@ import AppKit
 @main
 struct AgentHudApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var viewModel = AgentHudViewModel()
+    @StateObject private var viewModel = AgentHudViewModel(previewMode: CommandLine.arguments.contains { $0.hasPrefix("--render=") })
 
     init() {
         // Disable stdout buffering so logs appear immediately when redirected to a file.
         setbuf(stdout, nil)
+        UserDefaults.standard.removeObject(forKey: "hud.ampDateFolderBookmark")
 
         // Debug hook: `AgentHud --usage-selftest` prints the live usage mapping and exits
         // before any window is created. Useful if the endpoint ever changes.
@@ -19,6 +20,8 @@ struct AgentHudApp: App {
                     guard let window else { return "nil" }
                     return "\(Int(window.usedPercent))% used, resets \(window.resetsAt)"
                 }
+                let labels = CodexUsage.displayWindows(primary: usage.primary, secondary: usage.secondary).map(\.label)
+                print("HUD usage rows: \(labels.joined(separator: ", "))")
                 print("live usage: primary=\(describe(usage.primary))")
                 print("             secondary=\(describe(usage.secondary))")
                 print("             plan=\(usage.planType ?? "?") limitReached=\(usage.limitReached)")
@@ -41,7 +44,7 @@ struct AgentHudApp: App {
             print("usage: --render=mini|full")
             exit(0)
         }
-        let preview = AgentHudViewModel()
+        let preview = AgentHudViewModel(previewMode: true)
         preview.installPreviewSessions()
         preview.isPreviewMode = true
         preview.isMinimized = mode != "full"

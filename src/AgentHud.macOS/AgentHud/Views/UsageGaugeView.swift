@@ -18,6 +18,8 @@ struct UsageRow: Identifiable, Equatable {
     var warningPercent: Double = 0
     /// Explains a text-only "Stale" value (why it's stale, last update time). nil = no tip.
     var textToolTip: String? = nil
+    var remainingLabel: String?
+    var remainingText: String { remainingLabel ?? "\(Int(remainingPercent.rounded()))%" }
     private static let staleAfter: TimeInterval = 300
 
     var displayLabel: String {
@@ -76,6 +78,8 @@ struct UsageGaugeView: View {
                 .allowsHitTesting(row.textToolTip != nil)
                 .help(row.textToolTip ?? "")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("usage-\(row.id)")
     }
 }
 
@@ -118,7 +122,7 @@ struct UsageBarView: View {
                         .offset(x: markerOffset(row.warningPercent, width: width))
                         .help(warningTip)
                 }
-                Text("\(Int(row.remainingPercent.rounded()))%")
+                Text(row.remainingText)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -143,7 +147,7 @@ struct UsageBarView: View {
     }
 
     private var barTip: String {
-        var parts = ["\(Int(row.remainingPercent.rounded()))%"]
+        var parts = [row.remainingText]
         if !row.text.isEmpty { parts.append(row.text) }
         if row.fromServer {
             parts.append(Localiz.current.string("Usage.Live"))

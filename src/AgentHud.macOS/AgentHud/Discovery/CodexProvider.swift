@@ -8,6 +8,7 @@ public final class CodexProvider: IAgentProvider {
     /// Completed/inactive sessions stay listed this long after their last event.
     private static let completionRetention: TimeInterval = 1800
 
+    private let retainedParentIDs: () -> [String]
     private let sessionsRoot: String
     private let indexPath: String
     private var titles: [String: String] = [:]
@@ -15,7 +16,8 @@ public final class CodexProvider: IAgentProvider {
     private var cache: [String: CachedSession] = [:]
     private var activeWindowTicks: Int64
 
-    public init(home: String, activeWindow: TimeInterval = 3600) {
+    public init(home: String, activeWindow: TimeInterval = 3600, retainedParentIDs: @escaping () -> [String] = { [] }) {
+        self.retainedParentIDs = retainedParentIDs
         sessionsRoot = (home as NSString).appendingPathComponent(".codex/sessions")
         indexPath = (home as NSString).appendingPathComponent(".codex/session_index.jsonl")
         activeWindowTicks = Int64(activeWindow * 1_000_000)
@@ -50,6 +52,7 @@ public final class CodexProvider: IAgentProvider {
 
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { continue }
             let fileLength = (attrs[.size] as? Int64) ?? 0
+            let inode = attrs[.systemFileNumber] as? UInt64
             let fileModified = (attrs[.modificationDate] as? Date) ?? Date()
 
             // Fast path for old rollouts: skip the parse unless a usage-limit error is
@@ -59,7 +62,7 @@ public final class CodexProvider: IAgentProvider {
                 continue
             }
 
-            if let cached = cache[path], cached.length == fileLength, cached.modified == fileModified {
+            if let cached = cache[path], cached.inode == inode, cached.length == fileLength, cached.modified == fileModified {
                 let now = Date()
                 let age = now.timeIntervalSince(cached.session.lastActivityAt)
                 let limitPending = cached.session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
@@ -67,8 +70,9 @@ public final class CodexProvider: IAgentProvider {
 
                 if age <= Self.completionRetention || age <= activeWindow || limitPending {
                     var session = cached.session
-                    session.sessionTitle = titles[session.id]
+                    session.sessionTitle = titles[session.id] ?? session.sessionTitle
                     session.state = limited ? .rateLimited : session.state
+                    if age > 120 && [.working, .thinking].contains(session.state) { session.state = .unknown }
                     session.isActive = limitPending || (session.state != .stopped && age <= activeWindow)
                     result.append(session)
                 }
@@ -85,7 +89,8 @@ public final class CodexProvider: IAgentProvider {
                subagent["other"] as? String == "guardian" { continue }
 
             let id = (payload["id"] as? String) ?? (payload["session_id"] as? String)
-            guard let sessionId = id else { continue }
+            guard let id else { continue }
+            let sessionId = UUID(uuidString: id)?.uuidString.lowercased() ?? id
             let cwd = payload["cwd"] as? String
 
             var session = AgentSession(
@@ -104,7 +109,7 @@ public final class CodexProvider: IAgentProvider {
                 isActive: false,
                 wakeupAt: nil,
                 hasBackgroundTasks: false,
-                parentSessionId: (payload["parent_thread_id"] as? String).map { "codex:\($0)" },
+                parentSessionId: CodexFamily.parentID(payload, ownID: sessionId),
                 rateLimitResetAt: nil,
                 tokens5h: 0,
                 tokensWeek: 0,
@@ -113,38 +118,40 @@ public final class CodexProvider: IAgentProvider {
                 limitsUpdatedAt: nil
             )
 
+            session.isSubagent = CodexFamily.isChild(payload)
+            if session.isChildSession { session.sessionTitle = titles[session.id] ?? payload["agent_nickname"] as? String ?? payload["agent_path"] as? String }
+
             var pendingQuestion: String?
-            var pendingAsyncQuestion = false
+            var pendingAsyncQuestions: [String?: IndexSet] = [:]
             var rateLimitReset: Date?
             var limitWindowReset: Date?
-            var pendingApprovals = Set<String>()
-            var pendingApprovalWaits: [String: String] = [:]
-            if let previous = cache[path], fileLength >= previous.length {
+            var resumeOffset: Int64?
+            if let previous = cache[path], previous.inode == inode, previous.session.id == session.id, fileLength > previous.length {
+                resumeOffset = previous.readOffset
                 session = previous.session
                 pendingQuestion = previous.pendingQuestion
-                pendingAsyncQuestion = previous.pendingAsyncQuestion
+                pendingAsyncQuestions = previous.pendingAsyncQuestions
                 rateLimitReset = previous.session.rateLimitResetAt
                 limitWindowReset = previous.limitWindowReset
-                pendingApprovals = previous.pendingApprovals
-                pendingApprovalWaits = previous.pendingApprovalWaits
             }
 
-            guard let stream = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { continue }
-            defer { try? stream.close() }
-
-            // Read only the tail (256 KB); when the offset is inside a line, drop the partial first line.
-            let streamLength = (try? stream.seekToEnd()) ?? 0
-            let offset = streamLength > 262144 ? streamLength - 262144 : 0
-            try? stream.seek(toOffset: offset)
-            guard let data = try? stream.readToEnd() else { continue }
-            var content = String(data: data, encoding: .utf8) ?? ""
-            if offset > 0, let newline = content.firstIndex(of: "\n") {
-                content = String(content[content.index(after: newline)...])
-            }
-            let tail = content
-
-            for line in tail.components(separatedBy: "\n").dropLast() {
-                guard let entry = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            // On cold discovery use the recent tail. On growth resume at the last full
+            // record so a large tool result cannot push an answer out of the next poll.
+            guard let stream = fopen(path, "r") else { continue }
+            defer { fclose(stream) }
+            var readOffset = resumeOffset ?? max(0, fileLength - 262144)
+            guard fseeko(stream, max(0, readOffset - 1), SEEK_SET) == 0 else { continue }
+            var partial = readOffset > 0 && fgetc(stream) != 10
+            var buffer: UnsafeMutablePointer<CChar>?
+            var capacity = 0
+            defer { free(buffer) }
+            while readOffset < fileLength {
+                let size = getline(&buffer, &capacity, stream)
+                guard size > 0, let buffer, buffer[size - 1] == 10, Int64(size) <= fileLength - readOffset else { break }
+                readOffset += Int64(size)
+                if partial { partial = false; continue }
+                let data = Data(bytesNoCopy: buffer, count: size, deallocator: .none)
+                guard let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                 guard let timestamp = parseDate(entry["timestamp"] as? String) else { continue }
                 guard timestamp >= session.lastActivityAt else { continue }
 
@@ -156,9 +163,11 @@ public final class CodexProvider: IAgentProvider {
 
                 if kind == ("event_msg", "token_count") {
                     limitWindowReset = exhaustedWindowReset(body) ?? limitWindowReset
-                    if let primary = parseWindow(body, "primary") {
+                    let primary = parseWindow(body, "primary")
+                    let secondary = parseWindow(body, "secondary")
+                    if primary != nil || secondary != nil {
                         session.primaryLimit = primary
-                        session.secondaryLimit = parseWindow(body, "secondary") ?? session.secondaryLimit
+                        session.secondaryLimit = secondary
                         session.limitsUpdatedAt = timestamp
                     }
                 }
@@ -180,13 +189,27 @@ public final class CodexProvider: IAgentProvider {
                 let isAnswer = isOutput
                     && pendingQuestion != nil && body["call_id"] as? String == pendingQuestion
 
+                let finalReply = kind == ("response_item", "message") && body["role"] as? String == "assistant"
+                    && body["phase"] as? String == "final_answer"
+                if type == "turn_context", let turn = body["turn_id"] as? String { session.currentTurnID = turn }
+                if finalReply { session.localCompletionRevision = "codex-end:\(timestamp.timeIntervalSince1970)" }
                 var state = session.state
                 switch kind {
-                case ("event_msg", "task_started"), ("event_msg", "user_message"): state = .working
-                case ("event_msg", "task_complete"): state = .idle
-                case ("event_msg", "turn_aborted"): state = .stopped
+                case ("event_msg", "task_started"), ("event_msg", "user_message"):
+                    state = .working
+                    session.completionRevision = nil
+                    session.localCompletionRevision = nil
+                    if bodyType == "task_started" { session.currentTurnID = body["turn_id"] as? String }
+                case _ where kind == ("event_msg", "task_complete") || finalReply:
+                    state = .completed
+                    session.currentTurnID = body["turn_id"] as? String ?? session.currentTurnID
+                    session.completionRevision = session.currentTurnID.map { "turn:\($0)" } ?? "codex-end:\(timestamp.timeIntervalSince1970)"
+                case ("event_msg", "turn_aborted"):
+                    state = .stopped
+                    session.completionRevision = nil
+                    session.localCompletionRevision = nil
                 case ("response_item", "reasoning"): state = .thinking
-                case ("response_item", "function_call"), ("response_item", "custom_tool_call"): state = .working
+                case ("response_item", "function_call"), ("response_item", "custom_tool_call"), ("response_item", "function_call_output"), ("response_item", "custom_tool_call_output"): state = .working
                 default: break
                 }
                 if isQuestion {
@@ -196,36 +219,33 @@ public final class CodexProvider: IAgentProvider {
                     pendingQuestion = nil
                     state = .working
                 } else if kind == ("event_msg", "task_started") || kind == ("event_msg", "user_message")
-                    || kind == ("event_msg", "task_complete") || kind == ("event_msg", "turn_aborted") {
+                    || kind == ("event_msg", "task_complete") || finalReply || kind == ("event_msg", "turn_aborted") {
                     pendingQuestion = nil
                 }
-                if kind == ("event_msg", "task_started") || kind == ("event_msg", "user_message")
-                    || kind == ("event_msg", "task_complete") || kind == ("event_msg", "turn_aborted") {
-                    pendingApprovals.removeAll()
-                    pendingApprovalWaits.removeAll()
+                // Requesting escalation is not proof that a human approval is pending.
+                if isAsyncQuestion {
+                    let id = body["call_id"] as? String
+                    let arguments = (body["arguments"] ?? body["input"]) as? String
+                    let questions = arguments.flatMap { try? JSONDecoder().decode(AsyncQuestionArguments.self, from: Data($0.utf8)) }
+                    pendingAsyncQuestions[id] = IndexSet(integersIn: 0..<max(1, questions?.questions.count ?? 1))
                 }
-                if isCall, requestsApproval(body), let callId = body["call_id"] as? String {
-                    pendingApprovals.insert(callId)
-                }
-                if isCall, let cell = approvalWaitCell(body), pendingApprovals.contains(cell),
-                   let callId = body["call_id"] as? String {
-                    pendingApprovalWaits[callId] = cell
-                }
-                if isOutput, let callId = body["call_id"] as? String {
-                    var resolvesApproval = pendingApprovals.remove(callId) != nil
-                    if let cell = pendingApprovalWaits.removeValue(forKey: callId) {
-                        let removed = pendingApprovals.remove(cell) != nil
-                        resolvesApproval = resolvesApproval || removed
+                if !pendingAsyncQuestions.isEmpty {
+                    if kind == ("response_item", "message"), body["role"] as? String == "user" {
+                        for block in body["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "input_text" {
+                            if let text = block["text"] as? String { Self.applyAsyncReply(text, to: &pendingAsyncQuestions) }
+                        }
+                    } else if kind == ("event_msg", "user_message") {
+                        if let text = body["message"] as? String, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(Self.replyTag) {
+                            Self.applyAsyncReply(text, to: &pendingAsyncQuestions)
+                        } else {
+                            pendingAsyncQuestions[nil] = nil // Only legacy requests without a call ID.
+                        }
+                    } else if kind == ("event_msg", "turn_aborted") {
+                        pendingAsyncQuestions.removeAll()
                     }
-                    if resolvesApproval {
-                        if let cell = runningApprovalCell(body) { pendingApprovals.insert(cell) }
-                        state = .working
-                    }
                 }
-                if isAsyncQuestion { pendingAsyncQuestion = true }
-                if kind == ("event_msg", "user_message") || kind == ("event_msg", "turn_aborted") { pendingAsyncQuestion = false }
-                if pendingAsyncQuestion { state = .waitingForInput }
-                if !pendingApprovals.isEmpty { state = .waitingForApproval }
+                if pendingQuestion != nil { state = .waitingForInput }
+                session.needsInput = !pendingAsyncQuestions.isEmpty || pendingQuestion != nil
 
                 session.state = state
                 session.rateLimitResetAt = rateLimitReset
@@ -235,9 +255,9 @@ public final class CodexProvider: IAgentProvider {
                 session.lastActivityAt = fileModified
             }
 
-            cache[path] = CachedSession(length: fileLength, modified: fileModified, session: session, pendingQuestion: pendingQuestion, pendingAsyncQuestion: pendingAsyncQuestion, limitWindowReset: limitWindowReset, pendingApprovals: pendingApprovals, pendingApprovalWaits: pendingApprovalWaits)
+            cache[path] = CachedSession(length: fileLength, inode: inode, readOffset: readOffset, modified: fileModified, session: session, pendingQuestion: pendingQuestion, pendingAsyncQuestions: pendingAsyncQuestions, limitWindowReset: limitWindowReset)
 
-            session.sessionTitle = titles[session.id]
+            session.sessionTitle = titles[session.id] ?? session.sessionTitle
             let now = Date()
             let age = now.timeIntervalSince(session.lastActivityAt)
             let limitPending = session.rateLimitResetAt.map { now < $0.addingTimeInterval(Self.limitGrace) } ?? false
@@ -246,54 +266,78 @@ public final class CodexProvider: IAgentProvider {
             if age <= Self.completionRetention || age <= activeWindow || limitPending {
                 session.state = limited ? .rateLimited : session.state
                 session.isActive = limitPending || (session.state != .stopped && age <= activeWindow)
-                result.append(session)
+                if age > 120 && [.working, .thinking].contains(session.state) { session.state = .unknown }
+            result.append(session)
             }
         }
 
         for path in cache.keys where !seen.contains(path) {
             cache.removeValue(forKey: path)
         }
+        // A live child can outlast its parent's time window. Restore only the parent's
+        // session_meta context (no historical transcript/activity/usage is replayed).
+        var known = Set(result.map(\.id))
+        var pending = result.compactMap(\.parentSessionId) + retainedParentIDs()
+        var attempted = Set<String>()
+        while !pending.isEmpty && attempted.count < 64 {
+            let parentID = pending.removeLast()
+            guard !known.contains(parentID), attempted.insert(parentID).inserted,
+                  parentID.hasPrefix("codex:") else { continue }
+            let raw = String(parentID.dropFirst(6))
+            guard UUID(uuidString: raw) != nil,
+                  let relative = files.first(where: { $0.lowercased().hasSuffix(raw.lowercased() + ".jsonl") }),
+                  let line = try? readFirstLine((sessionsRoot as NSString).appendingPathComponent(relative)),
+                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  object["type"] as? String == "session_meta", let payload = object["payload"] as? [String: Any],
+                  (payload["id"] as? String ?? payload["session_id"] as? String)?.lowercased() == raw.lowercased() else { continue }
+            var context = AgentSession(id: parentID, agentType: .codex, state: .unknown,
+                hasUnreadCompletion: false, completionDetectedAt: nil, processId: nil,
+                projectPath: payload["cwd"] as? String, worktreePath: nil,
+                sessionTitle: titles[parentID] ?? payload["agent_nickname"] as? String,
+                currentTask: nil, startedAt: .distantPast, lastActivityAt: .distantPast, isActive: false,
+                wakeupAt: nil, hasBackgroundTasks: false, parentSessionId: CodexFamily.parentID(payload, ownID: raw),
+                rateLimitResetAt: nil, tokens5h: 0, tokensWeek: 0, primaryLimit: nil, secondaryLimit: nil)
+            context.isSubagent = CodexFamily.isChild(payload)
+            context.isAncestorContext = true
+            known.insert(parentID); result.append(context)
+            if let next = context.parentSessionId { pending.append(next) }
+        }
         return result
+    }
+
+    private struct AsyncQuestionArguments: Decodable {
+        struct Question: Decodable {}
+        let questions: [Question]
+    }
+
+    private static let replyTag = "<send_user_message_question_reply>"
+
+    // Codex Desktop serializes each questionItemId as a JSON tuple inside its answer envelope.
+    private static func applyAsyncReply(_ text: String, to pending: inout [String?: IndexSet]) {
+        let end = "</send_user_message_question_reply>"
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard message.hasPrefix(replyTag), message.hasSuffix(end) else { return }
+        let json = message.dropFirst(replyTag.count).dropLast(end.count)
+        guard let replies = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { return }
+        for reply in replies {
+            guard reply["answer"] is String, let raw = reply["questionItemId"] as? String,
+                  let key = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [Any], key.count == 3,
+                  key[0] as? String == "request_user_input_async", let call = key[1] as? String,
+                  let index = key[2] as? Int, index >= 0, pending[call]?.contains(index) == true else { continue }
+            pending[call]?.remove(index)
+            if pending[call]?.isEmpty == true { pending[call] = nil }
+        }
     }
 
     private struct CachedSession {
         let length: Int64
+        let inode: UInt64?
+        let readOffset: Int64
         let modified: Date
         let session: AgentSession
         let pendingQuestion: String?
-        let pendingAsyncQuestion: Bool
+        let pendingAsyncQuestions: [String?: IndexSet]
         let limitWindowReset: Date?
-        let pendingApprovals: Set<String>
-        let pendingApprovalWaits: [String: String]
-    }
-
-    // Codex Work rollout format verified 2026-10-16, matching the Windows provider.
-    private func requestsApproval(_ body: [String: Any]) -> Bool {
-        if let arguments = body["arguments"] as? String,
-           let json = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any] {
-            return json["sandbox_permissions"] as? String == "require_escalated"
-        }
-        guard let name = body["name"] as? String, name == "exec" || name == "functions.exec",
-              let input = body["input"] as? String else { return false }
-        return input.range(of: #"\bsandbox_permissions\s*["']?\s*:\s*["']require_escalated["']"#, options: .regularExpression) != nil
-    }
-
-    private func approvalWaitCell(_ body: [String: Any]) -> String? {
-        guard let name = body["name"] as? String, name == "wait" || name == "functions.wait",
-              let arguments = body["arguments"] as? String,
-              let json = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any],
-              let cell = json["cell_id"] as? String else { return nil }
-        return "cell:" + cell
-    }
-
-    private func runningApprovalCell(_ body: [String: Any]) -> String? {
-        let text = body["output"] as? String
-            ?? (body["output"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? ""
-        for line in text.components(separatedBy: "\n") where line.hasPrefix("Script running with cell ID ") {
-            let suffix = line.dropFirst("Script running with cell ID ".count)
-            if let cell = suffix.split(whereSeparator: { $0.isWhitespace }).first { return "cell:" + String(cell) }
-        }
-        return nil
     }
 
     private func usageLimitMessage(_ body: [String: Any]) -> String? {
@@ -372,7 +416,8 @@ public final class CodexProvider: IAgentProvider {
         for line in content.components(separatedBy: "\n") {
             guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let id = json["id"] as? String, let title = json["thread_name"] as? String else { continue }
-            newTitles["codex:\(id)"] = title
+            let canonical = UUID(uuidString: id)?.uuidString.lowercased() ?? id
+            newTitles["codex:\(canonical)"] = title
         }
         titles = newTitles
         indexStamp = stamp

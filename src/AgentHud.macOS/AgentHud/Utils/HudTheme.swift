@@ -22,8 +22,10 @@ enum HudTheme {
         switch state {
         case .working, .thinking, .starting:
             return Color(red: 0, green: 0xBF / 255, blue: 1)                    // DeepSkyBlue
-        case .waitingForInput, .waitingForApproval:
+        case .waitingForInput:
             return Color(red: 1, green: 0xD7 / 255, blue: 0)                    // Gold
+        case .waitingForApproval:
+            return .orange
         case .error:
             return Color(red: 1, green: 0x45 / 255, blue: 0)                    // OrangeRed
         case .rateLimited:

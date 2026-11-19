@@ -13,10 +13,16 @@ public struct ContentView: View {
     }
 
     private var visibleSessions: [AgentSession] {
-        viewModel.sessions.filter { !viewModel.hiddenSessionIds.contains($0.id) }
+        listRows.map(\.session)
+    }
+
+    private var listRows: [SessionListRow] {
+        SessionListPolicy.rows(viewModel.sessions, hidden: viewModel.hiddenSessionIds,
+                               activeWindow: TimeInterval(viewModel.activeWindowMinutes * 60))
     }
 
     public var body: some View {
+
         VStack(spacing: 0) {
             // Minimized mode drops the whole header: it becomes a pill of dots, so the
             // only way back is a double-click on the bar.
@@ -24,6 +30,9 @@ public struct ContentView: View {
                 minimizedContent
             } else {
                 header
+                if let message = viewModel.openingMessage {
+                    Text(message).font(.caption).foregroundStyle(HudTheme.secondary).padding(.bottom, 6)
+                }
                 fullContent
             }
         }
@@ -115,8 +124,8 @@ public struct ContentView: View {
                     .help("No active sessions — double-click to restore")
                     .allowsHitTesting(false)
             } else {
-                ForEach(visibleSessions) { session in
-                    StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+                ForEach(listRows) { row in
+                    StatusIndicator(session: row.session, hasRunningDescendants: row.hasRunningDescendants)
                         .allowsHitTesting(false)
                 }
             }
@@ -132,7 +141,7 @@ public struct ContentView: View {
                     MiniBarOverlay(
                         tooltips: visibleSessions.isEmpty
                             ? ["No active sessions — double-click to restore"]
-                            : visibleSessions.map { "\($0.projectName) — \($0.statusTip)" },
+                            : listRows.map { "\($0.session.projectName) — \($0.statusTip)" },
                         onDoubleClick: { viewModel.toggleMinimized() }
                     )
                 }
@@ -159,11 +168,33 @@ public struct ContentView: View {
                     .padding(.vertical, 8)
                     .allowsHitTesting(false)
             } else {
-                ForEach(visibleSessions) { session in
-                    SessionRow(session: session, viewModel: viewModel)
+                if viewModel.isPreviewMode {
+                    sessionRows // ImageRenderer does not render AppKit-backed scroll contents.
+                } else {
+                    ScrollView { sessionRows }
+                        .frame(height: min(CGFloat(visibleSessions.count) * 24, 288))
                 }
             }
+            ForEach(viewModel.sessions.filter(\.isAppActivity)) { activity in
+                HStack(spacing: 6) {
+                    StatusIndicator(session: activity)
+                    AgentIconView(type: activity.agentType).frame(width: 14, height: 14)
+                    Text(activity.agentType.displayName + " · " + (activity.sessionTitle ?? ""))
+                        .font(.system(size: 11)).foregroundStyle(HudTheme.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 5)
+                .help(Localiz.current.string("State.WindowOnlyHint"))
+            }
             usageSection
+        }
+    }
+
+    private var sessionRows: some View {
+        VStack(spacing: 0) {
+            ForEach(listRows) { row in
+                SessionRow(row: row, viewModel: viewModel)
+            }
         }
     }
 
@@ -266,6 +297,7 @@ struct HeaderButton: View {
 
 struct SettingsPopover: View {
     @ObservedObject var viewModel: AgentHudViewModel
+    @ObservedObject private var geminiTitles = GeminiBackgroundTitles.shared
     @State private var showOpenCodeLogin = false
 
     private let windowChoices = [5, 10, 30, 60, 120, 240, 1440]
@@ -291,11 +323,13 @@ struct SettingsPopover: View {
                     }
                 }
                 .frame(width: 220)
-                Toggle(isOn: $viewModel.showWaitingSymbols) {
-                    Text("Show waiting states as symbols (? / !)")
-                        .font(.system(size: 12))
-                }
-                .toggleStyle(.checkbox)
+                Text(Localiz.current.string("Settings.SessionListHint"))
+                    .font(.system(size: 10)).foregroundStyle(HudTheme.secondary).frame(width: 220, alignment: .leading)
+                Button(Localiz.current.string("Settings.DesktopPermission")) { viewModel.openAccessibilitySettings() }
+                Text(Localiz.current.string("Settings.DesktopHint")).font(.caption).foregroundStyle(HudTheme.secondary)
+                Button(Localiz.current.string(geminiTitles.connecting ? "Settings.GeminiFinish" : "Settings.GeminiConnect")) { geminiTitles.connect() }
+                    .disabled(geminiTitles.fetching)
+                Text(Localiz.current.string(geminiTitles.statusKey)).font(.caption).foregroundStyle(HudTheme.secondary)
                 Picker(Localiz.current.string("Settings.ConversationTarget"),
                        selection: $viewModel.conversationTarget) {
                     ForEach(ConversationTarget.allCases) { target in
@@ -357,6 +391,8 @@ struct SettingsPopover: View {
                 }
                 Divider()
                 VStack(alignment: .leading, spacing: 4) {
+                    UsageConnection(service: viewModel.ampWebUsage)
+                    UsageConnection(service: viewModel.claudeWebUsage)
                     Toggle(isOn: $viewModel.claudeLimitLinked) {
                         Text(Localiz.current.string("Settings.ClaudeLink")).font(.system(size: 12))
                     }
@@ -574,15 +610,24 @@ struct OpenCodeWebView: NSViewRepresentable {
 }
 
 struct SessionRow: View {
-    let session: AgentSession
+    let row: SessionListRow
+    private var session: AgentSession { row.session }
     @ObservedObject var viewModel: AgentHudViewModel
     @State private var hovering = false
     @State private var showMemo = false
 
     var body: some View {
         HStack(spacing: 6) {
-            StatusIndicator(session: session, showWaitingSymbols: viewModel.showWaitingSymbols)
+            StatusIndicator(session: session, hasRunningDescendants: row.hasRunningDescendants)
                 .allowsHitTesting(false)
+            if session.needsInput && [.working, .thinking, .starting].contains(session.state) {
+                Circle().fill(HudTheme.stateColor(.waitingForInput))
+                    .frame(width: StatusIndicator.diameter, height: StatusIndicator.diameter)
+                    .help(Localiz.current.string("State.QuestionPending"))
+            }
+            if session.sourceUnread == true && [.working, .thinking, .starting].contains(session.state) {
+                Circle().fill(.blue).frame(width: StatusIndicator.diameter, height: StatusIndicator.diameter).help(Localiz.current.string("State.UnreadMessages"))
+            }
             AgentIconView(type: session.agentType)
                 .frame(width: 16, height: 16)
                 .help(session.agentType.displayName)
@@ -619,19 +664,21 @@ struct SessionRow: View {
                 .foregroundStyle(HudTheme.dim)
                 .help(Localiz.current.string("Main.Dismiss"))
             } else {
-                Text(session.displayStateName)
+                Text(row.statusName)
                     .font(.system(size: 11))
                     .foregroundStyle(HudTheme.secondary)
                     .lineLimit(1)
-                    .help(session.statusTip)
+                    .help(row.statusTip)
                     .allowsHitTesting(false)
             }
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .background(viewModel.selectedSessionID == session.id ? HudTheme.border.opacity(0.6) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(row.statusName + (session.sourceUnread == true && session.displayState == .working ? " · " + Localiz.current.string("State.UnreadMessages") : "") + (session.needsInput ? " · " + Localiz.current.string("State.QuestionPending") : ""))
         .onTapGesture(count: 2) {
-            viewModel.acknowledgeCompletion(session.id)
             viewModel.openProject(session)
         }
         .contextMenu {
@@ -647,5 +694,19 @@ struct SessionRow: View {
                 if let path = session.projectPath { viewModel.setProjectMemo(path, text) }
             }
         }
+    }
+}
+
+private struct UsageConnection<Service: UsageConnectionModel>: View {
+    @ObservedObject var service: Service
+
+    var body: some View {
+        Button(Localiz.current.string(service.connecting ? "Settings.GeminiFinish" : service.connectKey)) {
+            service.connect()
+        }
+        .disabled(service.fetching)
+        Text(Localiz.current.string(service.statusKey))
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }

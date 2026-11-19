@@ -60,7 +60,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
             }
 
             let wakeupAt = alive ? transcript.wakeupAt : nil
-            let hasBackground = alive && (transcript.backgroundSince?.timeIntervalSinceNow ?? 0) > -3600
+            let hasBackground = alive && (transcript.backgroundSince.map { $0.timeIntervalSinceNow > -3600 } ?? false)
 
             if finalState == .idle && (transcript.midTurn || hasBackground || (wakeupAt?.timeIntervalSinceNow ?? 0) > 0) {
                 finalState = .working
@@ -70,7 +70,12 @@ public final class ClaudeCodeProvider: IAgentProvider {
                 finalState = .rateLimited
             }
 
-            let session = AgentSession(
+            if [.working, .thinking, .starting].contains(finalState) {
+                let activity = state == .idle ? transcript.lastActivityAt ?? updatedAt
+                    : max(updatedAt, transcript.lastActivityAt ?? .distantPast)
+                if Date().timeIntervalSince(activity) > 120 { finalState = .unknown }
+            }
+            var session = AgentSession(
                 id: "claude:\(sessionId)",
                 agentType: .claudeCode,
                 state: finalState,
@@ -94,6 +99,16 @@ public final class ClaudeCodeProvider: IAgentProvider {
                 secondaryLimit: nil,
                 limitsUpdatedAt: nil
             )
+            session.claudePromptPending = alive && transcript.lastWasPrompt && transcript.lastActivityAt.map {
+                (0...120).contains(Date().timeIntervalSince($0))
+            } == true
+            session.claudeMessageAt = transcript.lastActivityAt
+            session.localCompletionRevision = transcript.completionAt.map { "claude-end:\($0.timeIntervalSince1970)" }
+            session.needsInput = transcript.hasPendingQuestion
+            if finalState == .idle, let completed = transcript.completionAt {
+                session.state = .completed
+                session.completionRevision = "claude-end:\(completed.timeIntervalSince1970)"
+            }
             result.append(session)
         }
         return result
@@ -102,7 +117,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
     private func hasTranscript(_ sessionId: String) -> Bool {
         guard FileManager.default.fileExists(atPath: projectsRoot) else { return false }
         guard let projects = try? FileManager.default.contentsOfDirectory(atPath: projectsRoot) else { return false }
-        return projects.contains { FileManager.default.fileExists(atPath: ($0 as NSString).appendingPathComponent("\(sessionId).jsonl")) }
+        return projects.contains { FileManager.default.fileExists(atPath: ((projectsRoot as NSString).appendingPathComponent($0) as NSString).appendingPathComponent("\(sessionId).jsonl")) }
     }
 
     /// True when the transcript has not been touched since before the usage window,
@@ -113,7 +128,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
         let cutoff = Date().addingTimeInterval(-Self.usageWindow)
         guard let projects = try? FileManager.default.contentsOfDirectory(atPath: projectsRoot) else { return true }
         for project in projects {
-            let path = (project as NSString).appendingPathComponent("\(sessionId).jsonl")
+            let path = ((projectsRoot as NSString).appendingPathComponent(project) as NSString).appendingPathComponent("\(sessionId).jsonl")
             guard FileManager.default.fileExists(atPath: path) else { continue }
             return fileModificationDate(path) < cutoff
         }
@@ -121,6 +136,9 @@ public final class ClaudeCodeProvider: IAgentProvider {
     }
 
     private struct TranscriptInfo {
+        var completionAt: Date?
+        var lastWasPrompt = false
+        var lastActivityAt: Date?
         var title: String?
         var hasPendingQuestion: Bool = false
         var rateLimitResetAt: Date?
@@ -136,7 +154,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
 
         let projects = try FileManager.default.contentsOfDirectory(atPath: projectsRoot)
         for project in projects {
-            let path = (project as NSString).appendingPathComponent("\(sessionId).jsonl")
+            let path = ((projectsRoot as NSString).appendingPathComponent(project) as NSString).appendingPathComponent("\(sessionId).jsonl")
             guard FileManager.default.fileExists(atPath: path) else { continue }
 
             let url = URL(fileURLWithPath: path)
@@ -166,6 +184,24 @@ public final class ClaudeCodeProvider: IAgentProvider {
             guard let data = data, let content = String(data: data, encoding: .utf8) else { continue }
 
             for line in content.components(separatedBy: "\n") {
+                if let data = line.data(using: .utf8),
+                   let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   entry["sessionId"] as? String == sessionId, entry["isSidechain"] as? Bool != true {
+                    let type = entry["type"] as? String
+                    let message = entry["message"] as? [String: Any]
+                    if type == "user" || type == "assistant" {
+                        if entry["isMeta"] as? Bool == true { continue }
+                        info.lastActivityAt = parseDate(entry["timestamp"])
+                        let content = message?["content"]
+                        let blocks = content as? [[String: Any]]
+                        info.lastWasPrompt = type == "user" && (content is String || blocks?.contains { $0["type"] as? String == "text" } == true)
+                    }
+                    if type == "assistant", message?["stop_reason"] as? String == "end_turn" {
+                        info.completionAt = parseDate(entry["timestamp"])
+                    } else if type == "user" || type == "assistant" {
+                        info.completionAt = nil
+                    }
+                }
                 if line.contains("\"isApiErrorMessage\":true") {
                     rateLimitReset = parseRateLimit(line, sessionId: sessionId)
                     continue
@@ -208,7 +244,7 @@ public final class ClaudeCodeProvider: IAgentProvider {
                            isBackgroundCall(block), let callId = block["id"] as? String {
                             backgroundCalls.insert(callId)
                         }
-                        if type == "assistant", block["type"] as? String == "tool_use",
+                        if !sidechain && type == "assistant", block["type"] as? String == "tool_use",
                            block["name"] as? String == "AskUserQuestion", let questionId = block["id"] as? String {
                             pendingQuestions.insert(questionId)
                         } else if type == "assistant", block["type"] as? String == "tool_use",
@@ -371,7 +407,9 @@ public final class ClaudeCodeProvider: IAgentProvider {
             return Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
         }
         if let str = value as? String {
-            return ISO8601DateFormatter().date(from: str)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return formatter.date(from: str) ?? ISO8601DateFormatter().date(from: str)
         }
         return nil
     }

@@ -5,6 +5,8 @@ public enum AgentType: String, Codable, CaseIterable, Sendable {
     case codex = "Codex"
     case openCode = "OpenCode"
     case openCodeGo = "OpenCodeGo"
+    case amp = "Amp"
+    case gemini = "Gemini"
 
     public var displayName: String {
         switch self {
@@ -12,6 +14,8 @@ public enum AgentType: String, Codable, CaseIterable, Sendable {
         case .codex: return "Codex"
         case .openCode: return "OpenCode"
         case .openCodeGo: return "OpenCode Go"
+        case .amp: return "Amp"
+        case .gemini: return "Gemini"
         }
     }
 }
