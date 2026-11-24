@@ -10,10 +10,15 @@ set -euo pipefail
 CONFIG="${CONFIG:-release}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="$ROOT/src/AgentHud.macOS"
-DIST="$PACKAGE/dist"
+DIST="${DIST:-$PACKAGE/dist}"
 APP="$DIST/AgentHud.app"
 BUNDLE_ID="com.garunnir.agenthud"
 VERSION="${VERSION:-0.1.0}"
+SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-}"
+if [ -z "$SIGNING_IDENTITY" ] && [ -f "$ROOT/.local-signing-identity" ]; then
+    IFS= read -r SIGNING_IDENTITY < "$ROOT/.local-signing-identity" || [ -n "$SIGNING_IDENTITY" ]
+fi
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 cd "$PACKAGE"
 
@@ -67,10 +72,11 @@ PLIST
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Ad-hoc signature: keeps Gatekeeper quiet for locally built apps (no Apple account needed).
+# Prefer a stable development identity so rebuilding does not invalidate Accessibility grants.
 if command -v codesign >/dev/null 2>&1; then
-    echo "==> Signing (ad-hoc)"
-    codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "   (codesign skipped)"
+    echo "==> Signing"
+    codesign --force --sign "$SIGNING_IDENTITY" "$APP"
+    codesign --verify --strict "$APP"
 fi
 
 echo "==> Built: $APP"

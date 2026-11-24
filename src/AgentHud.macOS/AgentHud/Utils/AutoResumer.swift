@@ -40,7 +40,7 @@ public final class AutoResumer {
     }
 
     public func isDue(_ session: AgentSession) -> Bool {
-        guard let reset = session.rateLimitResetAt, session.parentSessionId == nil else { return false }
+        guard let reset = session.rateLimitResetAt, !session.isChildSession else { return false }
         let now = self.now()
         // A limit that reset long ago (HUD was closed) may already have been handled by the user.
         return now >= reset.addingTimeInterval(Self.startDelay)
@@ -59,7 +59,7 @@ public final class AutoResumer {
     }
 
     public func launch(for session: AgentSession) -> Launch? {
-        guard session.agentType == .claudeCode || session.agentType == .codex,
+        guard !session.isChildSession, session.agentType == .claudeCode || session.agentType == .codex,
               let separator = session.id.firstIndex(of: ":"),
               // Only a UUID-shaped session ID and fixed options go on the command line.
               let uuid = UUID(uuidString: String(session.id[session.id.index(after: separator)...])),

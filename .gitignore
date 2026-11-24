@@ -5,3 +5,5 @@ obj/
 .build/
 dist/
 *.app/
+
+.local-signing-identity

@@ -14,7 +14,11 @@ let package = Package(
             name: "AgentHud",
             path: "AgentHud",
             resources: [
-                .copy("Resources/Strings.tsv")
+                .copy("Resources/Strings.tsv"),
+                .copy("Resources/gemini_titles.rb"),
+                .copy("Resources/headless_browser.rb"),
+                .copy("Resources/amp_usage.rb"),
+                .copy("Resources/desktop_thread_status.rb")
             ]
         ),
         .testTarget(name: "AgentHudTests", dependencies: ["AgentHud"], path: "Tests")

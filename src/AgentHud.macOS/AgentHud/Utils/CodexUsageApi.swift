@@ -14,6 +14,24 @@ public struct CodexUsage {
     public let planType: String?
     public let limitReached: Bool
 
+    /// Newer accounts can receive their weekly allowance in either slot.
+    static func displayWindows(primary: LimitWindow?, secondary: LimitWindow?) -> [(label: String, window: LimitWindow)] {
+        var windows: [(label: String, window: LimitWindow)] = []
+        for (window, legacyLabel) in [(primary, "5h"), (secondary, "week")] {
+            guard let window else { continue }
+            let label: String
+            switch window.windowMinutes {
+            case 300: label = "5h"
+            case 10080: label = "week"
+            case nil: label = legacyLabel
+            case let minutes? where minutes > 0: label = "\(minutes)m"
+            default: continue
+            }
+            if !windows.contains(where: { $0.label == label }) { windows.append((label, window)) }
+        }
+        return windows
+    }
+
     public init(primary: LimitWindow?, secondary: LimitWindow?,
                 planType: String?, limitReached: Bool) {
         self.primary = primary
@@ -106,7 +124,8 @@ public final class CodexUsageApi {
             if http.statusCode == 401 || http.statusCode == 403 { throw CodexUsageError.unauthorized }
             guard (200..<300).contains(http.statusCode) else { throw CodexUsageError.http(http.statusCode) }
         }
-        guard let json = try? JSONDecoder().decode(Response.self, from: data) else {
+        guard let json = try? JSONDecoder().decode(Response.self, from: data),
+              let limits = json.rate_limit else {
             throw CodexUsageError.badResponse
         }
 
@@ -121,10 +140,10 @@ public final class CodexUsageApi {
                                windowMinutes: minutes)
         }
         return CodexUsage(
-            primary: window(json.rate_limit?.primary_window),
-            secondary: window(json.rate_limit?.secondary_window),
+            primary: window(limits.primary_window),
+            secondary: window(limits.secondary_window),
             planType: json.plan_type,
-            limitReached: json.rate_limit?.limit_reached ?? false
+            limitReached: limits.limit_reached ?? false
         )
     }
 }

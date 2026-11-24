@@ -193,3 +193,41 @@ Notify.RemoteControlForked	Forked "{0}" and opened it for Remote Control. Open i
 Notify.RemoteControlNoSession	There is no Claude session to open.	열 Claude 세션이 없습니다.
 Notify.RemoteControlNoCli	Couldn't find the claude CLI.	claude CLI를 찾을 수 없습니다.
 Notify.RemoteControlFailed	Couldn't start Remote Control. See remote-control.log.	Remote Control을 시작하지 못했습니다. remote-control.log를 확인하세요.
+Settings.DesktopFirst	Automatic · desktop first	자동 · 데스크톱 앱 우선
+Settings.DesktopPermission	Desktop accessibility settings	데스크톱 접근성 설정
+Settings.DesktopHint	Running desktop apps open first; VS Code is the fallback. Claude sidebar rows need Accessibility permission.	실행 중인 데스크톱 앱을 먼저 열고 VS Code로 대체합니다. Claude 사이드바 연결에는 접근성 권한이 필요합니다.
+Navigation.Failed	Could not open this conversation. Check that the app is installed and the source sidebar is available.	대화를 열지 못했습니다. 앱 설치와 원본 사이드바를 확인해 주세요.
+Navigation.ProjectOnly	Opened the project only. The completion remains unread.	프로젝트만 열었습니다. 완료 미확인 표시는 유지합니다.
+Navigation.ExtensionRequested	Sent the conversation to VS Code. Confirm the conversation there; unread status is retained.	VS Code에 대화 전환을 요청했습니다. 미확인 표시는 유지합니다.
+State.QuestionPending	Answer requested	답변 필요
+State.UnreadMessages	Unread messages	미확인 메시지
+State.ExecutionUnavailable	Per-thread execution state is unavailable	스레드별 실행 상태 미제공
+State.CurrentWindowWorking	Generating in the current window	현재 창에서 응답 생성 중
+State.WindowOnlyHint	This is a window-level signal; it is not attributed to a sidebar thread or treated as completion.	현재 창의 실행 신호입니다. 특정 스레드의 완료 상태로 추정하지 않습니다.
+Session.Subagents	Subagents	서브 에이전트
+Session.ChildAttention	Working or needs attention	실행 중 또는 확인 필요
+Settings.SessionListHint	Only dated recent activity and working/unread threads are shown. Undated idle rows stay hidden even when pinned or selected. Subagents start collapsed.	날짜가 확인된 최근 활동과 실행·미확인 항목만 표시합니다. 날짜 없는 대기 항목은 고정·선택 여부와 관계없이 숨깁니다. 서브 에이전트는 기본 접힘입니다.
+Session.DatedChat	Conversation	대화
+Session.LastMessage	Last message	마지막 메시지
+Session.LastViewed	Last reviewed	최근 확인
+Settings.GeminiConnect	Connect Gemini background titles	Gemini 백그라운드 제목 연결
+Settings.GeminiFinish	Finish sign-in	로그인 완료
+Settings.GeminiConnectHint	Sign in once to sync Gemini titles with the browser closed.	한 번 로그인하면 Chrome을 닫아도 Gemini 제목을 동기화합니다.
+Settings.GeminiFinishHint	Sign in to Gemini in the connection window, then select Finish sign-in.	연결용 창에서 Gemini에 로그인한 뒤 ‘로그인 완료’를 누르세요.
+Settings.GeminiCheckPending	The next refresh will check the connection.	다음 갱신 때 연결을 확인합니다.
+Settings.GeminiBusy	Close the connection browser and try again.	연결용 브라우저를 종료한 뒤 다시 시도하세요.
+Settings.GeminiUnavailable	Could not read the list. Saved titles are retained.	목록을 읽지 못했습니다. 저장된 제목은 유지합니다.
+Settings.GeminiSignIn	Reconnect your Gemini account to refresh titles.	Gemini 계정을 다시 연결하면 제목을 갱신합니다.
+Settings.GeminiConnected	Background title sync is connected.	백그라운드 제목 동기화가 연결됐습니다.
+Settings.ClaudeWebConnect	Connect Claude weekly usage	Claude 주간 사용량 연결
+Settings.ClaudeWebHint	Sign in once in the Claude connection window, even if you previously connected with Chrome. Close the window to start background updates.	기존 Chrome 연결을 쓰셨더라도 Claude Desktop과 같은 계정으로 한 번 로그인해 주세요. 연결 창을 닫으면 백그라운드 갱신을 시작합니다.
+Settings.ClaudeWebReady	Weekly usage updates every five minutes.	주간 사용량을 5분마다 갱신합니다.
+Settings.ClaudeWebSignIn	Sign in again to update Claude weekly usage.	Claude 주간 사용량을 갱신하려면 다시 로그인하세요.
+Settings.ClaudeWebFailed	Could not refresh Claude usage. Retrying automatically.	Claude 사용량을 가져오지 못했습니다. 자동으로 다시 시도합니다.
+Usage.ClaudeWebStaleTip	Last successful update from Claude at {0:MM-dd HH:mm}.	Claude 사용량 마지막 갱신 {0:MM-dd HH:mm}.
+Settings.AmpWebConnect	Connect Amp usage	Amp 사용량 연결
+Settings.AmpWebHint	Sign in with your Amp account, then finish sign-in.	Amp 계정으로 로그인한 뒤 ‘로그인 완료’를 누르세요.
+Settings.AmpWebReady	Agent and Orb usage updates every five minutes.	Agent와 Orb 잔여량을 5분마다 갱신합니다.
+Settings.AmpWebFailed	Could not refresh Amp usage. Check sign-in in the connection window.	Amp 사용량을 가져오지 못했습니다. 연결 창에서 로그인 상태를 확인하세요.
+Settings.AmpWebChrome	Google Chrome is required to connect Amp usage.	Amp 사용량 연결에는 Google Chrome이 필요합니다.
+Settings.AmpWebPermission	Allow AgentHUD in Accessibility settings to read Amp usage.	Amp 사용량을 읽으려면 접근성 설정에서 AgentHUD를 허용하세요.

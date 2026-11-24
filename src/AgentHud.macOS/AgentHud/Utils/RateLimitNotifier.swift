@@ -14,7 +14,7 @@ public final class RateLimitNotifier {
         let now = self.now()
         return sessions.filter { session in
             // A limit that reset long ago (HUD was closed) is not announced.
-            guard let reset = session.rateLimitResetAt, session.parentSessionId == nil,
+            guard let reset = session.rateLimitResetAt, !session.isChildSession,
                   now >= reset, now < reset.addingTimeInterval(CodexProvider.limitGrace) else { return false }
             return notified.insert("\(session.id)|\(reset.timeIntervalSince1970)").inserted
         }
