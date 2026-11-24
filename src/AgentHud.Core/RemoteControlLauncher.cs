@@ -151,8 +151,7 @@ public sealed class RemoteControlLauncher
 
     private static string? SessionGuid(AgentSession session)
     {
-        var separator = session.Id.IndexOf(':');
-        return separator >= 0 && Guid.TryParse(session.Id[(separator + 1)..], out var guid) ? guid.ToString() : null;
+        return Guid.TryParse(session.ConversationId, out var guid) ? guid.ToString() : null;
     }
 
     public static IReadOnlyList<NetworkInterface> PhysicalAdapters()

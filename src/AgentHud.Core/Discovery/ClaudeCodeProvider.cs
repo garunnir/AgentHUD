@@ -66,6 +66,22 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                 catch (UnauthorizedAccessException) { }
             }
         }
+        return SplitSharedConversations(result);
+    }
+
+    // 같은 대화를 여러 프로세스가 동시에 열 수 있다(예: 헤드리스 `claude -p` 실행을 VS Code에서 이어 열기).
+    // 살아 있는 프로세스마다 한 줄씩 보이도록, 가장 늦게 시작한 프로세스만 기본 Id를 쓰고 나머지는 "@pid"를 붙인다.
+    // 살아 있는 프로세스가 있으면 같은 대화의 죽은 세션 파일은 버린다.
+    private static List<AgentSession> SplitSharedConversations(List<AgentSession> sessions)
+    {
+        var result = new List<AgentSession>(sessions.Count);
+        foreach (var group in sessions.GroupBy(x => x.Id))
+        {
+            var alive = group.Where(x => x.IsActive).OrderByDescending(x => x.StartedAt).ThenByDescending(x => x.ProcessId).ToArray();
+            if (alive.Length == 0) { result.AddRange(group); continue; }
+            result.Add(alive[0]);
+            result.AddRange(alive.Skip(1).Select(x => x with { Id = $"{x.Id}@{x.ProcessId}" }));
+        }
         return result;
     }
 

@@ -110,6 +110,24 @@ try
         pid = Environment.ProcessId, sessionId = "busy-session", updatedAt = now.ToUnixTimeMilliseconds(), status = "busy" }));
     found = await provider.DiscoverAsync(CancellationToken.None);
     Assert(found.Single().State == AgentState.Working, "Claude busy status maps to Working");
+    // 같은 대화를 두 프로세스가 열면(헤드리스 claude -p + VS Code) 둘 다 보여야 함
+    var sharedId = Guid.NewGuid().ToString();
+    var otherPid = System.Diagnostics.Process.GetProcesses().Select(x => x.Id).First(x => x > 0 && x != Environment.ProcessId);
+    var sharedPath = Path.Combine(sessionsRoot, "shared.json");
+    await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = Environment.ProcessId, sessionId = sharedId, startedAt = now.AddMinutes(-5).ToUnixTimeMilliseconds(), status = "busy" }));
+    await File.WriteAllTextAsync(sharedPath, System.Text.Json.JsonSerializer.Serialize(new {
+        pid = otherPid, sessionId = sharedId, startedAt = now.ToUnixTimeMilliseconds(), status = "busy" }));
+    var sharedRegistry = new AgentSessionRegistry();
+    sharedRegistry.Replace(await provider.DiscoverAsync(CancellationToken.None));
+    var shared = sharedRegistry.GetAllAgents();
+    Assert(shared.Count == 2, "two live processes on one Claude conversation both stay visible");
+    Assert(shared.Single(x => x.ProcessId == otherPid).Id == $"claude:{sharedId}", "latest-started process keeps the base Id");
+    Assert(shared.Single(x => x.ProcessId == Environment.ProcessId).Id == $"claude:{sharedId}@{Environment.ProcessId}", "older process gets a pid suffix");
+    Assert(shared.All(x => x.ConversationId == sharedId), "pid suffix is stripped from the conversation id");
+    await File.WriteAllTextAsync(sharedPath, System.Text.Json.JsonSerializer.Serialize(new { pid = 2147483647, sessionId = sharedId, status = "busy" }));
+    Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().Id == $"claude:{sharedId}", "dead duplicate is dropped when a live process remains");
+    File.Delete(sharedPath);
     var titleId = Guid.NewGuid().ToString();
     var emptyVsCodeId = Guid.NewGuid().ToString();
     await File.WriteAllTextAsync(metadataPath, System.Text.Json.JsonSerializer.Serialize(new {

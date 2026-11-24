@@ -637,9 +637,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string? ConversationUri(AgentSession session)
     {
         if (session.AgentType is AgentType.OpenCode or AgentType.Cursor) return null; // No verified conversation URI; open the project only.
-        var sep = session.Id.IndexOf(':');
-        if (sep < 0) return null;
-        var id = Uri.EscapeDataString(session.Id[(sep + 1)..]);
+        if (session.ConversationId is not { } conversation) return null;
+        var id = Uri.EscapeDataString(conversation);
         return session.AgentType == AgentType.ClaudeCode ? $"vscode://anthropic.claude-code/open?session={id}" : $"vscode://openai.chatgpt/local/{id}";
     }
     private static void ShellOpen(string target) { try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch { } }

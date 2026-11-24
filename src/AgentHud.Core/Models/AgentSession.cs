@@ -10,6 +10,18 @@ public sealed record AgentSession
 {
     public required string Id { get; init; }
     public required AgentType AgentType { get; init; }
+    // Id의 "agent:" 뒤 대화 ID. 같은 대화를 여러 프로세스가 열면 Claude는 "@pid"를 붙여 Id를 구분하므로 그 부분은 뗀다
+    public string? ConversationId
+    {
+        get
+        {
+            var separator = Id.IndexOf(':');
+            if (separator < 0) return null;
+            var value = Id[(separator + 1)..];
+            var at = value.LastIndexOf('@');
+            return at > 0 && at < value.Length - 1 && value[(at + 1)..].All(char.IsAsciiDigit) ? value[..at] : value;
+        }
+    }
     public AgentState State { get; init; }
     public bool HasUnreadCompletion { get; init; }
     public DateTimeOffset? CompletionDetectedAt { get; init; }
