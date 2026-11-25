@@ -114,7 +114,17 @@
                 </ContextMenu>
               </Grid.ContextMenu>
               <Grid.ColumnDefinitions><ColumnDefinition Width="12"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="3" Text="{Binding DisplayTitle}" ToolTip="{Binding DisplayTitle}" Foreground="#DCE3ED" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="6,0,0,0" VerticalAlignment="Center"/>
+              <DockPanel Grid.Column="3" Margin="6,0,0,0">
+                <!-- claude -p 프로세스: 같은 대화를 VS Code가 함께 열면 두 줄이 생기므로 구분 -->
+                <Border x:Name="HeadlessBadge" DockPanel.Dock="Left" Background="#2A3A4F" CornerRadius="3" Padding="4,0" Margin="0,0,5,0" VerticalAlignment="Center" ToolTip="{Binding HeadlessTip}" Visibility="Collapsed">
+                  <TextBlock Text="{local:Tr Session.Headless}" Foreground="#9CC3F5" FontSize="10"/>
+                </Border>
+                <Grid>
+                  <TextBlock x:Name="TitleText" Text="{Binding DisplayTitle}" ToolTip="{Binding DisplayTitle}" Foreground="#DCE3ED" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" VerticalAlignment="Center"/>
+                  <!-- 마우스를 올리면 제목 대신 더블클릭 동작 표시 -->
+                  <TextBlock x:Name="OpenHintText" Text="{Binding OpenHint}" Foreground="#7AB8FF" FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" VerticalAlignment="Center" Visibility="Collapsed"/>
+                </Grid>
+              </DockPanel>
               <ContentControl Width="12" Height="18" Focusable="False" Template="{StaticResource StatusIndicator}"/>
               <Viewbox Grid.Column="1" Width="16" Height="16" Margin="0,0,6,0" ToolTip="{Binding DisplayName}" AutomationProperties.Name="{Binding DisplayName}">
                 <Path Stretch="Uniform" Style="{StaticResource AgentIconStyle}"/>
@@ -154,6 +164,17 @@
               <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
                 <Setter TargetName="StateText" Property="Visibility" Value="Hidden"/>
                 <Setter TargetName="DismissButton" Property="Visibility" Value="Visible"/>
+              </DataTrigger>
+              <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                  <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True"/>
+                  <Condition Binding="{Binding HasOpenHint}" Value="True"/>
+                </MultiDataTrigger.Conditions>
+                <Setter TargetName="TitleText" Property="Visibility" Value="Hidden"/>
+                <Setter TargetName="OpenHintText" Property="Visibility" Value="Visible"/>
+              </MultiDataTrigger>
+              <DataTrigger Binding="{Binding IsHeadless}" Value="True">
+                <Setter TargetName="HeadlessBadge" Property="Visibility" Value="Visible"/>
               </DataTrigger>
             </DataTemplate.Triggers>
           </DataTemplate>

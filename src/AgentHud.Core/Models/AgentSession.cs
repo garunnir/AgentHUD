@@ -32,6 +32,18 @@ public sealed record AgentSession
     public string? TerminalTitle { get; init; }
     public string? SessionTitle { get; init; }
     public string DisplayTitle => string.IsNullOrWhiteSpace(SessionTitle) ? Loc.T("Session.Untitled") : SessionTitle;
+    // Claude: `claude -p`(헤드리스)로 실행된 프로세스. 같은 대화를 VS Code가 함께 열면 두 줄이 보이므로 구분 표시
+    public bool IsHeadless { get; init; }
+    // 행에 마우스를 올리면 제목 자리에 보이는 더블클릭 동작 (MainWindow.OpenInVsCode와 맞출 것)
+    public string? OpenHint => string.IsNullOrWhiteSpace(WorktreePath ?? ProjectPath) ? null : Loc.T(AgentType switch
+    {
+        AgentType.Cursor => "Session.OpenCursorProject",
+        AgentType.OpenCode => "Session.OpenVsCodeProject",
+        _ when ConversationId is null => "Session.OpenVsCodeProject",
+        _ => "Session.OpenVsCodeConversation"
+    });
+    public bool HasOpenHint => OpenHint is not null;
+    public string HeadlessTip => Loc.F("Session.HeadlessTip", ProcessId ?? 0);
     public string? CurrentTask { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime LastActivityAt { get; init; }

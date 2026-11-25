@@ -125,6 +125,13 @@ try
     Assert(shared.Single(x => x.ProcessId == otherPid).Id == $"claude:{sharedId}", "latest-started process keeps the base Id");
     Assert(shared.Single(x => x.ProcessId == Environment.ProcessId).Id == $"claude:{sharedId}@{Environment.ProcessId}", "older process gets a pid suffix");
     Assert(shared.All(x => x.ConversationId == sharedId), "pid suffix is stripped from the conversation id");
+    Assert(shared.All(x => !x.IsHeadless), "without a -p command line no row is marked headless");
+    // 헤드리스 표시는 프로세스 명령줄의 -p/--print로 판단(따옴표 안 인자는 무시)
+    var headlessProvider = new ClaudeCodeProvider(testHome, (pid, _) => pid == Environment.ProcessId ? "\"C:\\npm\\claude.exe\" -p --output-format json -n queue" : "claude.exe --resume=x --input-format stream-json");
+    var headlessFound = await headlessProvider.DiscoverAsync(CancellationToken.None);
+    Assert(headlessFound.Single(x => x.ProcessId == Environment.ProcessId).IsHeadless && !headlessFound.Single(x => x.ProcessId == otherPid).IsHeadless, "claude -p process is marked headless");
+    Assert(headlessFound.All(x => x.OpenHint is null) && headlessFound.All(x => (x with { ProjectPath = testHome }).OpenHint == Loc.T("Session.OpenVsCodeConversation")), "headless row double-click opens the same conversation as the VS Code row");
+    Assert(ProcessCommandLine.IsClaudeHeadless("claude --print=text") && !ProcessCommandLine.IsClaudeHeadless("claude \"fix -p flag\"") && !ProcessCommandLine.IsClaudeHeadless("-p"), "headless flag parsing ignores quoted text and the exe token");
     await File.WriteAllTextAsync(sharedPath, System.Text.Json.JsonSerializer.Serialize(new { pid = 2147483647, sessionId = sharedId, status = "busy" }));
     Assert((await provider.DiscoverAsync(CancellationToken.None)).Single().Id == $"claude:{sharedId}", "dead duplicate is dropped when a live process remains");
     File.Delete(sharedPath);

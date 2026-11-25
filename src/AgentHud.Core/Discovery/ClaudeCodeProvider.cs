@@ -13,7 +13,14 @@ public sealed class ClaudeCodeProvider : IAgentProvider
     // Start() 시점에 존재하는 루트만 감시. 새 CLAUDE_CONFIG_DIR는 3초 주기 Discover가 잡는다.
     public IEnumerable<string> WatchRoots => ClaudeConfigRoot.Discover(_home).SelectMany(x => x.WatchRoots);
 
-    public ClaudeCodeProvider(string home) => _home = home;
+    // 프로세스 명령줄 조회(헤드리스 `claude -p` 표시용). 테스트에서 주입
+    private readonly Func<int, DateTime, string?> _commandLine;
+
+    public ClaudeCodeProvider(string home, Func<int, DateTime, string?>? commandLine = null)
+    {
+        _home = home;
+        _commandLine = commandLine ?? ProcessCommandLine.Get;
+    }
 
     public async Task<IReadOnlyList<AgentSession>> DiscoverAsync(CancellationToken token)
     {
@@ -48,11 +55,14 @@ public sealed class ClaudeCodeProvider : IAgentProvider
                     if (state == AgentState.Idle && (transcript.MidTurn || hasBackground || wakeupAt > DateTime.UtcNow)) state = AgentState.Working;
                     if (alive && transcript.RateLimitResetAt > DateTime.UtcNow && state is not (AgentState.Stopped or AgentState.WaitingForInput or AgentState.WaitingForApproval))
                         state = AgentState.RateLimited;
+                    var startedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file);
+                    // 세션 파일의 kind/entrypoint는 VS Code 터미널에서 띄운 `claude -p`도 interactive/claude-vscode로 적으므로 명령줄로 판단(2.1.331 확인)
+                    var headless = alive && ProcessCommandLine.IsClaudeHeadless(_commandLine(data.Pid, startedAt));
                     result.Add(new AgentSession
                     {
                         Id = $"claude:{data.SessionId}", AgentType = AgentType, ProcessId = data.Pid,
                         ProjectPath = data.Cwd, WorktreePath = GitRoot.Find(data.Cwd), SessionTitle = transcript.Title ?? data.Name,
-                        StartedAt = ParseDate(data.StartedAt) ?? File.GetCreationTimeUtc(file), LastActivityAt = activity,
+                        StartedAt = startedAt, LastActivityAt = activity, IsHeadless = headless,
                         State = state, IsActive = alive, WakeupAt = wakeupAt,
                         HasBackgroundTasks = hasBackground, RateLimitResetAt = transcript.RateLimitResetAt,
                         Tokens5h = transcript.Usage?.Where(x => DateTime.UtcNow - x.At <= ShortWindow).Sum(x => x.Tokens) ?? 0,
